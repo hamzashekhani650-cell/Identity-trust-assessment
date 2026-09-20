@@ -1,0 +1,4 @@
+emirates_id,given_name,family_name,date_of_birth,nationality,source_facility,registration_date,canonical_id,trust_score,decision,dim_completeness,dim_temporal,dim_identity,dim_provenance,dim_cross_record
+784-1985-1234567-1,Ahmed,Al-Mansoori,1985-03-15,UAE,Cleveland Clinic Abu Dhabi,2024-01-10,P001,1.0,AUTO_LINK,1.0,1.0,1.0,1.0,1.0
+,Raj,Kumar,1990-07-22,India,Al Noor Hospital,2024-02-15,P002,0.755,LINK_WITH_FLAG,0.0,1.0,1.0,0.7,1.0
+784-1985-1234567-1,Fatima,Al-Zahra,1992-01-01,UAE,SSMC,2024-03-20,P003,0.7,QUARANTINE,1.0,1.0,1.0,1.0,0.0

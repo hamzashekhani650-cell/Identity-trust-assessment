@@ -1,0 +1,21 @@
+{
+  "resourceType": "Patient",
+  "identifier": [],
+  "name": [
+    {
+      "given": [
+        "Raj"
+      ],
+      "family": "Kumar"
+    }
+  ],
+  "birthDate": "1990-07-22",
+  "meta": {
+    "tag": [
+      {
+        "system": "https://fhir.doh.gov.ae/facility",
+        "display": "Al Noor Hospital"
+      }
+    ]
+  }
+}

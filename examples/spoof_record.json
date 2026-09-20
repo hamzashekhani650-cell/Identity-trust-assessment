@@ -1,0 +1,26 @@
+{
+  "resourceType": "Patient",
+  "identifier": [
+    {
+      "system": "https://fhir.doh.gov.ae/emirates-id",
+      "value": "784-1999-9999999-9"
+    }
+  ],
+  "name": [
+    {
+      "given": [
+        "Ahmed"
+      ],
+      "family": "Al-Mansoori"
+    }
+  ],
+  "birthDate": "1985-03-15",
+  "meta": {
+    "tag": [
+      {
+        "system": "https://fhir.doh.gov.ae/facility",
+        "display": "Al Noor Hospital"
+      }
+    ]
+  }
+}

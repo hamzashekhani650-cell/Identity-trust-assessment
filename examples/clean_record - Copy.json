@@ -1,0 +1,26 @@
+{
+  "resourceType": "Patient",
+  "identifier": [
+    {
+      "system": "https://fhir.doh.gov.ae/emirates-id",
+      "value": "784-1985-1234567-1"
+    }
+  ],
+  "name": [
+    {
+      "given": [
+        "Ahmed"
+      ],
+      "family": "Al-Mansoori"
+    }
+  ],
+  "birthDate": "1985-03-15",
+  "meta": {
+    "tag": [
+      {
+        "system": "https://fhir.doh.gov.ae/facility",
+        "display": "Cleveland Clinic Abu Dhabi"
+      }
+    ]
+  }
+}
