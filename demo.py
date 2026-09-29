@@ -91,8 +91,7 @@ if uploaded_file is not None:
     
     st.subheader("Batch Results")
     st.table(
-        results_df[["canonical_id", "given_name", "family_name", "trust_score", "decision", "explanation"]],
-        use_container_width=True
+        results_df[["canonical_id", "given_name", "family_name", "trust_score", "decision", "explanation"]]
     )
 
     flagged = results_df[results_df["decision"].isin(["LINK_WITH_FLAG", "QUARANTINE"])]
