@@ -90,7 +90,7 @@ if uploaded_file is not None:
     results_df = pd.DataFrame(results)
     
     st.subheader("Batch Results")
-    st.dataframe(
+    st.table(
         results_df[["canonical_id", "given_name", "family_name", "trust_score", "decision", "explanation"]],
         use_container_width=True
     )
