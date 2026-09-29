@@ -22,42 +22,27 @@ st.title("Identity Trust Assessment")
 st.caption("Five-dimension trust layer for patient identity resolution in HIEs")
 
 # ============================================================
-# COLOR THEMES
+# COLOR OPTIONS
 # ============================================================
-theme_colors = {
-    "Default": {
-        "high": "#10B981",      # Green
-        "medium": "#F59E0B",    # Orange
-        "low": "#8B5CF6",       # Purple
-        "critical": "#EF4444"   # Red
-    },
-    "Pink & Red": {
-        "high": "#EC4899",      # Pink
-        "medium": "#F43F5E",    # Rose
-        "low": "#E11D48",       # Deep Pink
-        "critical": "#881337"   # Dark Red
-    },
-    "Purple & Orange": {
-        "high": "#A855F7",      # Purple
-        "medium": "#F97316",    # Orange
-        "low": "#8B5CF6",       # Violet
-        "critical": "#EF4444"   # Red
-    }
+color_options = {
+    "Blue": "#1E90FF",
+    "Pink": "#FF69B4",
+    "Red": "#FF0000",
+    "Orange": "#FFA500",
+    "Purple": "#800080",
+    "Green": "#32CD32",
+    "Teal": "#008080",
+    "Magenta": "#FF00FF",
+    "Indigo": "#4B0082",
+    "Black": "#000000",
+    "Gray": "#808080",
+    "Gold": "#FFD700"
 }
 
 # ============================================================
-# CUSTOM PROGRESS BAR FUNCTION
+# CUSTOM PROGRESS BAR FUNCTION (SINGLE COLOR)
 # ============================================================
-def render_dimension_bar(label, score, palette):
-    if score >= 0.8:
-        color = palette["high"]
-    elif score >= 0.6:
-        color = palette["medium"]
-    elif score >= 0.4:
-        color = palette["low"]
-    else:
-        color = palette["critical"]
-        
+def render_dimension_bar(label, score, color):
     pct = int(score * 100)
     html = f"""
     <div style="margin-bottom: 12px;">
@@ -78,9 +63,9 @@ def render_dimension_bar(label, score, palette):
 with st.sidebar:
     st.subheader("Configuration")
     
-    # THE NEW COLOR PICKER DROPDOWN
-    selected_theme = st.selectbox("🎨 Color Theme", list(theme_colors.keys()))
-    palette = theme_colors[selected_theme]
+    # THE NEW SINGLE COLOR PICKER DROPDOWN
+    selected_color_name = st.selectbox("🎨 Bar Color", list(color_options.keys()))
+    selected_color = color_options[selected_color_name]
     
     st.warning("⚠️ **Privacy Notice:** This demo uses synthetic data only. Do not upload real patient health information (PHI).")
     
@@ -273,12 +258,12 @@ with tab2:
                 st.info(f"**Forensic Detail:** {row['explanation']}")
                 st.write("**Dimension Scores:**")
                 
-                # Pass the selected palette to the bar renderer
-                render_dimension_bar("Completeness", row['dim_completeness'], palette)
-                render_dimension_bar("Temporal", row['dim_temporal'], palette)
-                render_dimension_bar("Identity", row['dim_identity'], palette)
-                render_dimension_bar("Provenance", row['dim_provenance'], palette)
-                render_dimension_bar("Cross-Record", row['dim_cross_record'], palette)
+                # Pass the selected single color to the bar renderer
+                render_dimension_bar("Completeness", row['dim_completeness'], selected_color)
+                render_dimension_bar("Temporal", row['dim_temporal'], selected_color)
+                render_dimension_bar("Identity", row['dim_identity'], selected_color)
+                render_dimension_bar("Provenance", row['dim_provenance'], selected_color)
+                render_dimension_bar("Cross-Record", row['dim_cross_record'], selected_color)
 
         st.write("")
         csv_flagged = flagged.to_csv(index=False).encode('utf-8')
