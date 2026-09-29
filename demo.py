@@ -21,18 +21,12 @@ st.set_page_config(page_title="Identity Trust Assessment", layout="wide")
 st.title("Identity Trust Assessment")
 st.caption("Five-dimension trust layer for patient identity resolution in HIEs")
 
-# ============================================================
-# ADDITION 1: PRIVACY WARNING BANNER
-# ============================================================
 st.warning("⚠️ **Privacy Notice:** This demo uses synthetic data only. Do not upload real patient health information (PHI).")
 
 st.markdown("""
 **Instructions:** Upload a CSV containing patient records. The trust layer will assess each record and flag any identity collisions or low-trust records for review.
 """)
 
-# ============================================================
-# ADDITION 2: SAMPLE CSV DOWNLOAD
-# ============================================================
 sample_data = pd.DataFrame({
     "emirates_id": ["784-1985-1234567-1", "", "784-1985-1234567-1"],
     "given_name": ["Ahmed", "Raj", "Fatima"],
@@ -87,40 +81,80 @@ if uploaded_file is not None:
         decision = route_decision_hard(score, dims["cross_record"])
         log_decision(rec, dims, score, decision)
 
+        # ============================================================
+        # UPGRADED: GRANULAR, FORENSIC EXPLANATIONS
+        # ============================================================
         explanation = "Record is clean and trusted."
+        primary_issue = "None"
+        
         if decision in ("LINK_WITH_FLAG", "QUARANTINE"):
             weakest_dim = min(dims, key=dims.get)
             weakest_val = dims[weakest_dim]
             
             if weakest_dim == "cross_record":
                 if weakest_val == 0.0:
-                    explanation = "Identifier collision detected: this record shares an identifier with a different patient already in the system."
+                    # Find exactly who owns this ID to make the explanation forensic
+                    colliding_id = "Unknown"
+                    colliding_patient = "Unknown"
+                    if rec.emirates_id and rec.emirates_id in cv.identifier_index:
+                        for owner_id in cv.identifier_index[rec.emirates_id]:
+                            if owner_id != rec.canonical_id:
+                                colliding_id = owner_id
+                                break
+                    
+                    explanation = (f"FORENSIC COLLISION: Identifier '{rec.emirates_id}' is already registered "
+                                   f"to patient {colliding_id}. This record claims to be {rec.given_name} {rec.family_name} "
+                                   f"(DOB: {rec.date_of_birth}), which is a different identity.")
+                    primary_issue = "Identifier Collision"
                 elif weakest_val == 0.5:
-                    explanation = "Potential collision: this record's name and date of birth match an existing patient, but the identifier differs."
+                    explanation = (f"POTENTIAL COLLISION: Name ({rec.given_name} {rec.family_name}) and "
+                                   f"DOB ({rec.date_of_birth}) match an existing patient, but the identifier differs.")
+                    primary_issue = "Potential Name/DOB Collision"
             elif weakest_dim == "completeness":
-                explanation = "Incomplete data: missing required identity fields."
-            elif weakest_dim == "temporal":
-                explanation = "Temporal error: invalid or suspicious date of birth."
-            elif weakest_dim == "identity":
-                explanation = "Identity inconsistency: malformed identifier format."
+                missing_fields = []
+                if not rec.emirates_id: missing_fields.append("Emirates ID")
+                if not rec.given_name: missing_fields.append("Given Name")
+                if not rec.family_name: missing_fields.append("Family Name")
+                if not rec.date_of_birth: missing_fields.append("Date of Birth")
+                explanation = f"INCOMPLETE DATA: Missing required fields: {', '.join(missing_fields)}."
+                primary_issue = "Missing Demographics"
             elif weakest_dim == "provenance":
-                explanation = "Low-trust source: the facility is not in the high-trust tier."
+                explanation = (f"LOW-TRUST SOURCE: Facility '{rec.source_facility}' is not in the high-trust tier. "
+                               f"Records from this source require manual verification.")
+                primary_issue = "Untrusted Facility"
+            elif weakest_dim == "temporal":
+                explanation = f"TEMPORAL ERROR: The date of birth '{rec.date_of_birth}' is invalid or implausible."
+                primary_issue = "Temporal Validity Error"
+            elif weakest_dim == "identity":
+                explanation = f"IDENTITY INCONSISTENCY: The Emirates ID '{rec.emirates_id}' format is malformed."
+                primary_issue = "Malformed Identifier"
             else:
                 explanation = f"Flagged due to low score in {weakest_dim}."
+                primary_issue = f"Low {weakest_dim} Score"
 
         results.append({
             "canonical_id": rec.canonical_id,
             "given_name": rec.given_name,
             "family_name": rec.family_name,
+            "source_facility": rec.source_facility,
             "trust_score": round(score, 3),
             "decision": decision,
             "explanation": explanation,
+            "primary_issue": primary_issue,
+            "dim_completeness": dims["completeness"],
+            "dim_temporal": dims["temporal"],
+            "dim_identity": dims["identity"],
+            "dim_provenance": dims["provenance"],
+            "dim_cross_record": dims["cross_record"],
         })
         
         cv.add_record(rec)
 
     results_df = pd.DataFrame(results)
 
+    # ============================================================
+    # DASHBOARD & ANALYTICS
+    # ============================================================
     st.divider()
     total = len(results_df)
     auto = len(results_df[results_df["decision"] == "AUTO_LINK"])
@@ -133,17 +167,47 @@ if uploaded_file is not None:
     col3.metric("⚠️ Flagged", flag)
     col4.metric("🚨 Quarantined", quar)
 
-    st.subheader("Decision Breakdown")
-    decision_counts = results_df["decision"].value_counts()
-    st.bar_chart(decision_counts)
+    st.subheader("📊 Deep Dive Analytics")
+    tab1, tab2, tab3 = st.tabs(["Decision Breakdown", "Root Cause Analysis", "Facility Risk Profile"])
+    
+    with tab1:
+        st.markdown("**Distribution of Routing Decisions**")
+        decision_counts = results_df["decision"].value_counts()
+        st.bar_chart(decision_counts)
+        
+    with tab2:
+        st.markdown("**Top Reasons for Flagging/Quarantine**")
+        issue_counts = results_df[results_df["primary_issue"] != "None"]["primary_issue"].value_counts()
+        if not issue_counts.empty:
+            st.bar_chart(issue_counts)
+        else:
+            st.info("No records were flagged in this batch.")
+            
+    with tab3:
+        st.markdown("**Flagged/Quarantined Records by Source Facility**")
+        flagged_df = results_df[results_df["decision"].isin(["LINK_WITH_FLAG", "QUARANTINE"])]
+        if not flagged_df.empty:
+            facility_counts = flagged_df["source_facility"].value_counts()
+            st.bar_chart(facility_counts)
+        else:
+            st.info("No records were flagged in this batch.")
 
+    # ============================================================
+    # DIMENSION SCORING DISTRIBUTION
+    # ============================================================
+    st.subheader("📉 Dimension Scoring Averages")
+    st.markdown("Where is the data quality failing across the five dimensions?")
+    dim_means = results_df[["dim_completeness", "dim_temporal", "dim_identity", "dim_provenance", "dim_cross_record"]].mean()
+    dim_means.index = ["Completeness", "Temporal", "Identity", "Provenance", "Cross-Record"]
+    st.bar_chart(dim_means)
+
+    # ============================================================
+    # BATCH RESULTS TABLE
+    # ============================================================
     st.divider()
     st.subheader("Batch Results")
-    st.markdown(results_df[["canonical_id", "given_name", "family_name", "trust_score", "decision", "explanation"]].to_markdown(index=False))
+    st.markdown(results_df[["canonical_id", "given_name", "family_name", "trust_score", "decision", "primary_issue"]].to_markdown(index=False))
 
-    # ============================================================
-    # ADDITION 3: DOWNLOAD FULL SCORED CSV
-    # ============================================================
     st.download_button(
         label="📥 Download Full Scored Batch (CSV)",
         data=results_df.to_csv(index=False).encode('utf-8'),
@@ -151,18 +215,28 @@ if uploaded_file is not None:
         mime='text/csv',
     )
 
+    # ============================================================
+    # FLAGGED RECORDS SECTION
+    # ============================================================
     flagged = results_df[results_df["decision"].isin(["LINK_WITH_FLAG", "QUARANTINE"])]
     
     if not flagged.empty:
         st.divider()
-        st.subheader("⚠️ Flagged Records for Review")
+        st.subheader("🔍 Flagged Records for Review")
         st.warning(f"{len(flagged)} record(s) require manual review.")
         
         for _, row in flagged.iterrows():
             with st.expander(f"{row['canonical_id']} - {row['given_name']} {row['family_name']} ({row['decision']})"):
                 st.write(f"**Trust Score:** {row['trust_score']}")
-                st.write(f"**Reason:** {row['explanation']}")
-        
+                st.write(f"**Primary Issue:** {row['primary_issue']}")
+                st.info(f"**Forensic Detail:** {row['explanation']}")
+                st.write("**Dimension Scores:**")
+                st.progress(row['dim_completeness'], text=f"Completeness: {row['dim_completeness']:.2f}")
+                st.progress(row['dim_temporal'], text=f"Temporal: {row['dim_temporal']:.2f}")
+                st.progress(row['dim_identity'], text=f"Identity: {row['dim_identity']:.2f}")
+                st.progress(row['dim_provenance'], text=f"Provenance: {row['dim_provenance']:.2f}")
+                st.progress(row['dim_cross_record'], text=f"Cross-Record: {row['dim_cross_record']:.2f}")
+
         st.write("")
         csv = flagged.to_csv(index=False).encode('utf-8')
         st.download_button(
