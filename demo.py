@@ -22,10 +22,66 @@ st.title("Identity Trust Assessment")
 st.caption("Five-dimension trust layer for patient identity resolution in HIEs")
 
 # ============================================================
+# COLOR THEMES
+# ============================================================
+theme_colors = {
+    "Default": {
+        "high": "#10B981",      # Green
+        "medium": "#F59E0B",    # Orange
+        "low": "#8B5CF6",       # Purple
+        "critical": "#EF4444"   # Red
+    },
+    "Pink & Red": {
+        "high": "#EC4899",      # Pink
+        "medium": "#F43F5E",    # Rose
+        "low": "#E11D48",       # Deep Pink
+        "critical": "#881337"   # Dark Red
+    },
+    "Purple & Orange": {
+        "high": "#A855F7",      # Purple
+        "medium": "#F97316",    # Orange
+        "low": "#8B5CF6",       # Violet
+        "critical": "#EF4444"   # Red
+    }
+}
+
+# ============================================================
+# CUSTOM PROGRESS BAR FUNCTION
+# ============================================================
+def render_dimension_bar(label, score, palette):
+    if score >= 0.8:
+        color = palette["high"]
+    elif score >= 0.6:
+        color = palette["medium"]
+    elif score >= 0.4:
+        color = palette["low"]
+    else:
+        color = palette["critical"]
+        
+    pct = int(score * 100)
+    html = f"""
+    <div style="margin-bottom: 12px;">
+        <div style="display: flex; justify-content: space-between; font-family: 'Helvetica', sans-serif; font-size: 14px; margin-bottom: 4px;">
+            <span style="font-weight: 600; color: #374151;">{label}</span>
+            <span style="color: #6B7280;">{score:.2f}</span>
+        </div>
+        <div style="background-color: #E5E7EB; border-radius: 6px; height: 12px; width: 100%; overflow: hidden;">
+            <div style="background-color: {color}; width: {pct}%; height: 100%; border-radius: 6px; transition: width 0.5s ease-in-out;"></div>
+        </div>
+    </div>
+    """
+    st.markdown(html, unsafe_allow_html=True)
+
+# ============================================================
 # SIDEBAR: INPUTS AND WARNINGS
 # ============================================================
 with st.sidebar:
-    st.header("⚙️ Configuration")
+    st.subheader("Configuration")
+    
+    # THE NEW COLOR PICKER DROPDOWN
+    selected_theme = st.selectbox("🎨 Color Theme", list(theme_colors.keys()))
+    palette = theme_colors[selected_theme]
+    
     st.warning("⚠️ **Privacy Notice:** This demo uses synthetic data only. Do not upload real patient health information (PHI).")
     
     sample_data = pd.DataFrame({
@@ -167,7 +223,6 @@ with tab1:
 
     st.divider()
     
-    # Altair makes the charts look MUCH more professional
     st.subheader("Decision Breakdown")
     decision_counts = results_df["decision"].value_counts().reset_index()
     decision_counts.columns = ["Decision", "Count"]
@@ -217,11 +272,13 @@ with tab2:
                 st.write(f"**Primary Issue:** {row['primary_issue']}")
                 st.info(f"**Forensic Detail:** {row['explanation']}")
                 st.write("**Dimension Scores:**")
-                st.progress(row['dim_completeness'], text=f"Completeness: {row['dim_completeness']:.2f}")
-                st.progress(row['dim_temporal'], text=f"Temporal: {row['dim_temporal']:.2f}")
-                st.progress(row['dim_identity'], text=f"Identity: {row['dim_identity']:.2f}")
-                st.progress(row['dim_provenance'], text=f"Provenance: {row['dim_provenance']:.2f}")
-                st.progress(row['dim_cross_record'], text=f"Cross-Record: {row['dim_cross_record']:.2f}")
+                
+                # Pass the selected palette to the bar renderer
+                render_dimension_bar("Completeness", row['dim_completeness'], palette)
+                render_dimension_bar("Temporal", row['dim_temporal'], palette)
+                render_dimension_bar("Identity", row['dim_identity'], palette)
+                render_dimension_bar("Provenance", row['dim_provenance'], palette)
+                render_dimension_bar("Cross-Record", row['dim_cross_record'], palette)
 
         st.write("")
         csv_flagged = flagged.to_csv(index=False).encode('utf-8')
