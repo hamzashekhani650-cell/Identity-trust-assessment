@@ -10,8 +10,7 @@ def route_decision(trust_score):
     else:
         return "QUARANTINE"
 
-
-def route_decision_hard(trust_score, cross_record_score, auto_thresh=0.952, quar_thresh=0.571):
+def route_decision_hard(trust_score, cross_record_score, auto_thresh=0.75, quar_thresh=0.45):
     if cross_record_score == 0.0:
         return "QUARANTINE"
     if trust_score < quar_thresh:
