@@ -1,3 +1,4 @@
+import io
 import streamlit as st
 import pandas as pd
 import altair as alt
@@ -21,7 +22,6 @@ COLOR_OPTIONS = {
     "Teal": "#008080", "Magenta": "#FF00FF", "Indigo": "#4B0082",
     "Black": "#000000", "Gray": "#808080", "Gold": "#FFD700",
 }
-
 PREFIXES = ["mr.", "mrs.", "ms.", "dr.", "mr ", "mrs ", "ms ", "dr "]
 
 def render_dimension_bar(label, score, color):
@@ -40,26 +40,23 @@ def render_dimension_bar(label, score, color):
     st.markdown(html, unsafe_allow_html=True)
 
 # ============================================================
-# ENHANCED NORMALIZATION
+# NORMALIZATION HELPERS
 # ============================================================
 def normalize_text(value):
     if pd.isna(value) or value is None:
         return ""
     s = str(value).strip()
-    # Strip common honorifics
     lower = s.lower()
     for prefix in PREFIXES:
         if lower.startswith(prefix):
             s = s[len(prefix):].strip()
             break
-    # Collapse internal whitespace
     s = " ".join(s.split())
     return s.title()
 
 def normalize_id(value):
     if pd.isna(value) or value is None or str(value).strip() == "":
         return None
-    # Keep only digits — strips hyphens, spaces, dots, etc.
     digits_only = "".join(c for c in str(value) if c.isdigit())
     return digits_only if digits_only else None
 
@@ -80,6 +77,146 @@ def normalize_date(value):
         return parsed.strftime("%Y-%m-%d")
     except Exception:
         return s
+
+# ============================================================
+# CACHED PROCESSING PIPELINE
+# This is the biggest speed win. The scoring pipeline runs
+# once per unique file. Changing color/filters won't re-run it.
+# ============================================================
+@st.cache_data(show_spinner="Running trust assessment...")
+def run_trust_assessment(file_bytes):
+    df = pd.read_csv(io.BytesIO(file_bytes))
+    df.columns = [str(c).strip() for c in df.columns]
+
+    column_synonyms = {
+        "emirates_id": ["emirates_id", "Emirates ID", "ID", "Identifier", "emirates id", "EmiratesID", "National ID"],
+        "given_name": ["given_name", "First Name", "FirstName", "Given Name", "given name", "GivenName"],
+        "family_name": ["family_name", "Last Name", "LastName", "Surname", "Family Name", "family name", "FamilyName"],
+        "date_of_birth": ["date_of_birth", "DOB", "Date of Birth", "BirthDate", "Birth Date", "date of birth", "DOB "],
+        "nationality": ["nationality", "Nationality", "Country"],
+        "source_facility": ["source_facility", "Facility", "Hospital", "Source Facility", "source facility"],
+        "registration_date": ["registration_date", "Registration Date", "Reg Date", "registration date"],
+        "canonical_id": ["canonical_id", "Canonical ID", "Patient ID", "MRN", "canonical id", "PatientID"],
+    }
+    for target, options in column_synonyms.items():
+        for opt in options:
+            if opt in df.columns:
+                df = df.rename(columns={opt: target})
+                break
+
+    required_cols = ["given_name", "family_name", "date_of_birth"]
+    missing_cols = [c for c in required_cols if c not in df.columns]
+    if missing_cols:
+        return None, {"error": f"Missing columns: {', '.join(missing_cols)}", "found": list(df.columns)}
+
+    # Normalization with change tracking
+    df["_orig_given"] = df["given_name"].astype(str)
+    df["_orig_family"] = df["family_name"].astype(str)
+    df["_orig_dob"] = df["date_of_birth"].astype(str)
+    df["_orig_id"] = df["emirates_id"].astype(str) if "emirates_id" in df.columns else ""
+
+    df["given_name"] = df["given_name"].apply(normalize_text)
+    df["family_name"] = df["family_name"].apply(normalize_text)
+    df["date_of_birth"] = df["date_of_birth"].apply(normalize_date)
+    df["source_facility"] = df["source_facility"].apply(normalize_text)
+    df["nationality"] = df["nationality"].apply(normalize_text)
+    if "emirates_id" in df.columns:
+        df["emirates_id"] = df["emirates_id"].apply(normalize_id)
+
+    df["_changed_name"] = (df["_orig_given"] != df["given_name"].astype(str)) | (df["_orig_family"] != df["family_name"].astype(str))
+    df["_changed_dob"] = df["_orig_dob"] != df["date_of_birth"].astype(str)
+    df["_changed_id"] = (df["_orig_id"] != df["emirates_id"].astype(str)) & (df["_orig_id"].str.strip() != "")
+
+    total_raw = len(df)
+    missing_ids_raw = int(df["emirates_id"].isna().sum()) if "emirates_id" in df.columns else total_raw
+    missing_dob_raw = int((df["date_of_birth"] == "").sum())
+    duplicate_ids_raw = int(df["emirates_id"].duplicated().sum()) if "emirates_id" in df.columns else 0
+    total_normalized = int((df["_changed_name"] | df["_changed_dob"] | df["_changed_id"]).sum())
+
+    cv = CrossRecordValidator()
+    results = []
+
+    for index, row in df.iterrows():
+        rec = PatientRecord(
+            emirates_id=row.get("emirates_id") if pd.notna(row.get("emirates_id")) else None,
+            given_name=row.get("given_name", ""),
+            family_name=row.get("family_name", ""),
+            date_of_birth=row.get("date_of_birth", ""),
+            nationality=row.get("nationality", ""),
+            source_facility=row.get("source_facility", ""),
+            registration_date=row.get("registration_date", ""),
+            canonical_id=str(row.get("canonical_id", f"ROW_{index}")),
+        )
+        dims = {
+            "completeness": validate_completeness(rec),
+            "temporal": validate_temporal(rec),
+            "identity": validate_identity_consistency(rec),
+            "provenance": validate_provenance(rec),
+            "cross_record": cv.validate(rec),
+        }
+        score = compute_trust_score(**dims)
+        decision = route_decision_hard(score, dims["cross_record"])
+        log_decision(rec, dims, score, decision)
+
+        explanation = "Record is clean and trusted."
+        primary_issue = "None"
+        if decision in ("LINK_WITH_FLAG", "QUARANTINE"):
+            weakest_dim = min(dims, key=dims.get)
+            weakest_val = dims[weakest_dim]
+            if weakest_dim == "cross_record":
+                if weakest_val == 0.0:
+                    colliding_id = "Unknown"
+                    if rec.emirates_id and rec.emirates_id in cv.identifier_index:
+                        for owner_id in cv.identifier_index[rec.emirates_id]:
+                            if owner_id != rec.canonical_id:
+                                colliding_id = owner_id
+                                break
+                    explanation = (f"FORENSIC COLLISION: Identifier '{rec.emirates_id}' is already registered "
+                                   f"to patient {colliding_id}. This record claims to be {rec.given_name} {rec.family_name} "
+                                   f"(DOB: {rec.date_of_birth}), which is a different identity.")
+                    primary_issue = "Identifier Collision"
+                elif weakest_val == 0.5:
+                    explanation = (f"POTENTIAL COLLISION: Name ({rec.given_name} {rec.family_name}) and "
+                                   f"DOB ({rec.date_of_birth}) match an existing patient, but the identifier differs.")
+                    primary_issue = "Potential Name/DOB Collision"
+            elif weakest_dim == "completeness":
+                missing_fields = [f for f, v in [("Emirates ID", rec.emirates_id), ("Given Name", rec.given_name), ("Family Name", rec.family_name), ("DOB", rec.date_of_birth)] if not v]
+                explanation = f"INCOMPLETE DATA: Missing required fields: {', '.join(missing_fields)}."
+                primary_issue = "Missing Demographics"
+            elif weakest_dim == "provenance":
+                explanation = f"LOW-TRUST SOURCE: Facility '{rec.source_facility}' is not in the high-trust tier."
+                primary_issue = "Untrusted Facility"
+            elif weakest_dim == "temporal":
+                explanation = f"TEMPORAL ERROR: The date of birth '{rec.date_of_birth}' could not be normalized to a valid ISO date (YYYY-MM-DD)."
+                primary_issue = "Temporal Validity Error"
+            elif weakest_dim == "identity":
+                explanation = f"IDENTITY INCONSISTENCY: The Emirates ID '{rec.emirates_id}' format is malformed."
+                primary_issue = "Malformed Identifier"
+            else:
+                explanation = f"Flagged due to low score in {weakest_dim}."
+                primary_issue = f"Low {weakest_dim} Score"
+
+        results.append({
+            "canonical_id": rec.canonical_id, "given_name": rec.given_name,
+            "family_name": rec.family_name, "source_facility": rec.source_facility,
+            "trust_score": round(score, 3), "decision": decision,
+            "explanation": explanation, "primary_issue": primary_issue,
+            "dim_completeness": dims["completeness"], "dim_temporal": dims["temporal"],
+            "dim_identity": dims["identity"], "dim_provenance": dims["provenance"],
+            "dim_cross_record": dims["cross_record"],
+        })
+        cv.add_record(rec)
+
+    results_df = pd.DataFrame(results)
+
+    meta = {
+        "total_raw": total_raw,
+        "missing_ids_raw": missing_ids_raw,
+        "missing_dob_raw": missing_dob_raw,
+        "duplicate_ids_raw": duplicate_ids_raw,
+        "total_normalized": total_normalized,
+    }
+    return results_df, meta, df
 
 # ============================================================
 # SIDEBAR
@@ -112,146 +249,19 @@ if uploaded_file is None:
     st.info("👈 Please upload a CSV file in the sidebar to begin the assessment.")
     st.stop()
 
-# ============================================================
-# SMART COLUMN MAPPING
-# ============================================================
-df = pd.read_csv(uploaded_file)
-df.columns = [str(c).strip() for c in df.columns]
+# Read file bytes once (so caching works)
+file_bytes = uploaded_file.getvalue()
+result = run_trust_assessment(file_bytes)
 
-column_synonyms = {
-    "emirates_id": ["emirates_id", "Emirates ID", "ID", "Identifier", "emirates id", "EmiratesID", "National ID"],
-    "given_name": ["given_name", "First Name", "FirstName", "Given Name", "given name", "GivenName"],
-    "family_name": ["family_name", "Last Name", "LastName", "Surname", "Family Name", "family name", "FamilyName"],
-    "date_of_birth": ["date_of_birth", "DOB", "Date of Birth", "BirthDate", "Birth Date", "date of birth", "DOB "],
-    "nationality": ["nationality", "Nationality", "Country"],
-    "source_facility": ["source_facility", "Facility", "Hospital", "Source Facility", "source facility"],
-    "registration_date": ["registration_date", "Registration Date", "Reg Date", "registration date"],
-    "canonical_id": ["canonical_id", "Canonical ID", "Patient ID", "MRN", "canonical id", "PatientID"],
-}
-for target, options in column_synonyms.items():
-    for opt in options:
-        if opt in df.columns:
-            df = df.rename(columns={opt: target})
-            break
-
-required_cols = ["given_name", "family_name", "date_of_birth"]
-missing_cols = [c for c in required_cols if c not in df.columns]
-if missing_cols:
-    st.error(f"Missing required columns in CSV. Could not find columns for: {', '.join(missing_cols)}")
-    st.info(f"Columns currently in your file: {', '.join(df.columns)}")
+if result[0] is None:
+    st.error(f"Missing required columns. Found: {result[1]['found']}")
     st.stop()
 
-# ============================================================
-# PRE-CLEANING WITH CHANGE TRACKING
-# ============================================================
-df["_orig_given"] = df["given_name"].astype(str)
-df["_orig_family"] = df["family_name"].astype(str)
-df["_orig_dob"] = df["date_of_birth"].astype(str)
-df["_orig_id"] = df["emirates_id"].astype(str) if "emirates_id" in df.columns else ""
-
-df["given_name"] = df["given_name"].apply(normalize_text)
-df["family_name"] = df["family_name"].apply(normalize_text)
-df["date_of_birth"] = df["date_of_birth"].apply(normalize_date)
-df["source_facility"] = df["source_facility"].apply(normalize_text)
-df["nationality"] = df["nationality"].apply(normalize_text)
-if "emirates_id" in df.columns:
-    df["emirates_id"] = df["emirates_id"].apply(normalize_id)
-
-df["_changed_name"] = (df["_orig_given"] != df["given_name"].astype(str)) | (df["_orig_family"] != df["family_name"].astype(str))
-df["_changed_dob"] = df["_orig_dob"] != df["date_of_birth"].astype(str)
-df["_changed_id"] = (df["_orig_id"] != df["emirates_id"].astype(str)) & (df["_orig_id"].str.strip() != "")
-
-total_normalized = int((df["_changed_name"] | df["_changed_dob"] | df["_changed_id"]).sum())
+results_df, meta = result[0], result[1]
+df_meta = result[2]
 
 # ============================================================
-# DATA PROFILING
-# ============================================================
-total_raw = len(df)
-missing_ids_raw = df["emirates_id"].isna().sum() if "emirates_id" in df.columns else total_raw
-missing_dob_raw = (df["date_of_birth"] == "").sum()
-duplicate_ids_raw = df["emirates_id"].duplicated().sum() if "emirates_id" in df.columns else 0
-
-# ============================================================
-# SCORING
-# ============================================================
-cv = CrossRecordValidator()
-results = []
-
-for index, row in df.iterrows():
-    rec = PatientRecord(
-        emirates_id=row.get("emirates_id") if pd.notna(row.get("emirates_id")) else None,
-        given_name=row.get("given_name", ""),
-        family_name=row.get("family_name", ""),
-        date_of_birth=row.get("date_of_birth", ""),
-        nationality=row.get("nationality", ""),
-        source_facility=row.get("source_facility", ""),
-        registration_date=row.get("registration_date", ""),
-        canonical_id=str(row.get("canonical_id", f"ROW_{index}")),
-    )
-    dims = {
-        "completeness": validate_completeness(rec),
-        "temporal": validate_temporal(rec),
-        "identity": validate_identity_consistency(rec),
-        "provenance": validate_provenance(rec),
-        "cross_record": cv.validate(rec),
-    }
-    score = compute_trust_score(**dims)
-    decision = route_decision_hard(score, dims["cross_record"])
-    log_decision(rec, dims, score, decision)
-
-    explanation = "Record is clean and trusted."
-    primary_issue = "None"
-    if decision in ("LINK_WITH_FLAG", "QUARANTINE"):
-        weakest_dim = min(dims, key=dims.get)
-        weakest_val = dims[weakest_dim]
-        if weakest_dim == "cross_record":
-            if weakest_val == 0.0:
-                colliding_id = "Unknown"
-                if rec.emirates_id and rec.emirates_id in cv.identifier_index:
-                    for owner_id in cv.identifier_index[rec.emirates_id]:
-                        if owner_id != rec.canonical_id:
-                            colliding_id = owner_id
-                            break
-                explanation = (f"FORENSIC COLLISION: Identifier '{rec.emirates_id}' is already registered "
-                               f"to patient {colliding_id}. This record claims to be {rec.given_name} {rec.family_name} "
-                               f"(DOB: {rec.date_of_birth}), which is a different identity.")
-                primary_issue = "Identifier Collision"
-            elif weakest_val == 0.5:
-                explanation = (f"POTENTIAL COLLISION: Name ({rec.given_name} {rec.family_name}) and "
-                               f"DOB ({rec.date_of_birth}) match an existing patient, but the identifier differs.")
-                primary_issue = "Potential Name/DOB Collision"
-        elif weakest_dim == "completeness":
-            missing_fields = [f for f, v in [("Emirates ID", rec.emirates_id), ("Given Name", rec.given_name), ("Family Name", rec.family_name), ("DOB", rec.date_of_birth)] if not v]
-            explanation = f"INCOMPLETE DATA: Missing required fields: {', '.join(missing_fields)}."
-            primary_issue = "Missing Demographics"
-        elif weakest_dim == "provenance":
-            explanation = f"LOW-TRUST SOURCE: Facility '{rec.source_facility}' is not in the high-trust tier."
-            primary_issue = "Untrusted Facility"
-        elif weakest_dim == "temporal":
-            explanation = f"TEMPORAL ERROR: The date of birth '{rec.date_of_birth}' could not be normalized to a valid ISO date (YYYY-MM-DD)."
-            primary_issue = "Temporal Validity Error"
-        elif weakest_dim == "identity":
-            explanation = f"IDENTITY INCONSISTENCY: The Emirates ID '{rec.emirates_id}' format is malformed."
-            primary_issue = "Malformed Identifier"
-        else:
-            explanation = f"Flagged due to low score in {weakest_dim}."
-            primary_issue = f"Low {weakest_dim} Score"
-
-    results.append({
-        "canonical_id": rec.canonical_id, "given_name": rec.given_name,
-        "family_name": rec.family_name, "source_facility": rec.source_facility,
-        "trust_score": round(score, 3), "decision": decision,
-        "explanation": explanation, "primary_issue": primary_issue,
-        "dim_completeness": dims["completeness"], "dim_temporal": dims["temporal"],
-        "dim_identity": dims["identity"], "dim_provenance": dims["provenance"],
-        "dim_cross_record": dims["cross_record"],
-    })
-    cv.add_record(rec)
-
-results_df = pd.DataFrame(results)
-
-# ============================================================
-# LAYOUT: 4 TABS (main simple tabs + one advanced tucked away)
+# LAYOUT
 # ============================================================
 tab1, tab2, tab3, tab4 = st.tabs([
     "📊 Executive Dashboard",
@@ -278,7 +288,6 @@ with tab1:
     st.altair_chart(chart1, use_container_width=True)
 
     st.subheader("Facility Risk Profile")
-    st.markdown("Which facilities produced the most flagged records?")
     flagged_df = results_df[results_df["decision"].isin(["LINK_WITH_FLAG", "QUARANTINE"])]
     if not flagged_df.empty:
         fac_counts = flagged_df["source_facility"].value_counts().reset_index()
@@ -307,7 +316,6 @@ with tab2:
     if flagged.empty:
         st.success("All records processed cleanly. No flags raised.")
     else:
-        # Sort: QUARANTINE first (highest risk), then by trust score ascending
         priority = {"QUARANTINE": 0, "LINK_WITH_FLAG": 1}
         flagged["_priority"] = flagged["decision"].map(priority)
         flagged = flagged.sort_values(["_priority", "trust_score"]).drop(columns="_priority")
@@ -315,30 +323,20 @@ with tab2:
         st.subheader("🚩 Flagged Records for Manual Review")
         st.warning(f"{len(flagged)} record(s) require manual review.")
 
-        # ============================================================
-        # FILTERS
-        # ============================================================
-        fc1, fc2, fc3 = st.columns([2, 2, 1])
+        fc1, fc2 = st.columns([2, 2])
         with fc1:
             issue_options = sorted(flagged["primary_issue"].unique().tolist())
             selected_issues = st.multiselect("Filter by issue type", options=issue_options, default=issue_options)
         with fc2:
             decision_options = sorted(flagged["decision"].unique().tolist())
             selected_decisions = st.multiselect("Filter by decision", options=decision_options, default=decision_options)
-        with fc3:
-            st.write("")
-            st.write("")
 
         filtered = flagged[
             (flagged["primary_issue"].isin(selected_issues)) &
             (flagged["decision"].isin(selected_decisions))
         ]
-
         st.caption(f"Showing {len(filtered)} of {len(flagged)} flagged records.")
 
-        # ============================================================
-        # BULK ACTION: Copy all IDs
-        # ============================================================
         all_ids = "\n".join(filtered["canonical_id"].astype(str).tolist())
         with st.expander("📋 Bulk Actions"):
             st.markdown("**Copy all filtered record IDs:**")
@@ -347,14 +345,19 @@ with tab2:
         st.divider()
 
         # ============================================================
-        # RECORD CARDS with copy buttons
+        # SHOW-COUNT CONTROL — avoids rendering thousands of expanders
         # ============================================================
-        for _, row in filtered.iterrows():
+        SHOW_STEP = 100
+        if "show_count" not in st.session_state:
+            st.session_state.show_count = SHOW_STEP
+
+        to_render = filtered.head(st.session_state.show_count)
+        st.caption(f"Rendering {len(to_render)} of {len(filtered)} filtered records.")
+
+        for _, row in to_render.iterrows():
             with st.expander(f"{row['canonical_id']} — {row['given_name']} {row['family_name']} ({row['decision']})"):
-                # Copy button via st.code (has built-in copy icon)
                 st.markdown("**Record ID (click the copy icon):**")
                 st.code(row["canonical_id"], language=None)
-
                 st.write(f"**Trust Score:** {row['trust_score']}")
                 st.write(f"**Primary Issue:** {row['primary_issue']}")
                 st.info(f"**Forensic Detail:** {row['explanation']}")
@@ -365,6 +368,12 @@ with tab2:
                 render_dimension_bar("Provenance", row["dim_provenance"], selected_color)
                 render_dimension_bar("Cross-Record", row["dim_cross_record"], selected_color)
 
+        # Load-more button
+        if len(filtered) > st.session_state.show_count:
+            if st.button("🔽 Load more records"):
+                st.session_state.show_count += SHOW_STEP
+                st.rerun()
+
         st.write("")
         st.download_button(
             label="📥 Download Filtered Flagged Records (CSV)",
@@ -374,7 +383,12 @@ with tab2:
 
 with tab3:
     st.subheader("Batch Results")
-    st.markdown(results_df[["canonical_id", "given_name", "family_name", "trust_score", "decision", "primary_issue"]].to_markdown(index=False))
+    # Limit table render if very large
+    if len(results_df) > 500:
+        st.caption(f"Showing first 500 of {len(results_df)} records. Download the CSV for the full list.")
+        st.markdown(results_df.head(500)[["canonical_id", "given_name", "family_name", "trust_score", "decision", "primary_issue"]].to_markdown(index=False))
+    else:
+        st.markdown(results_df[["canonical_id", "given_name", "family_name", "trust_score", "decision", "primary_issue"]].to_markdown(index=False))
     st.download_button(
         label="📥 Download Full Scored Batch (CSV)",
         data=results_df.to_csv(index=False).encode("utf-8"),
@@ -388,17 +402,15 @@ with tab4:
         "Formatting differences (whitespace, casing, date format, honorifics) do **not** "
         "trigger flags — only real trust failures do."
     )
-
-    st.metric("Records Normalized", total_normalized, help="Records where at least one field was reformatted.")
+    st.metric("Records Normalized", meta["total_normalized"])
 
     st.divider()
 
-    if total_normalized == 0:
+    if meta["total_normalized"] == 0:
         st.info("No formatting differences were detected in this batch.")
     else:
-        st.markdown("### Changes Applied")
         change_rows = []
-        for index, row in df.iterrows():
+        for index, row in df_meta.iterrows():
             changes = []
             if row["_changed_name"]:
                 changes.append(f"Name: '{row['_orig_given']} {row['_orig_family']}' → '{row['given_name']} {row['family_name']}'")
@@ -413,10 +425,15 @@ with tab4:
                 })
 
         change_df = pd.DataFrame(change_rows)
-        st.dataframe(change_df, use_container_width=True)
+        # Limit rendering for large logs
+        if len(change_df) > 200:
+            st.caption(f"Showing first 200 of {len(change_df)} normalized records.")
+            st.dataframe(change_df.head(200), use_container_width=True)
+        else:
+            st.dataframe(change_df, use_container_width=True)
 
         st.download_button(
-            label="📥 Download Normalization Log (CSV)",
+            label="📥 Download Full Normalization Log (CSV)",
             data=change_df.to_csv(index=False).encode("utf-8"),
             file_name="normalization_log.csv", mime="text/csv",
         )
@@ -424,10 +441,7 @@ with tab4:
     st.divider()
     st.subheader("Source Data Quality Snapshot")
     col_a, col_b, col_c = st.columns(3)
-    col_a.metric("Total Records in File", total_raw)
-    col_b.metric("Missing Emirates ID", missing_ids_raw)
-    col_c.metric("Duplicate Emirates IDs", duplicate_ids_raw)
-    st.info(
-        "💡 **Recommendation:** High missing-ID or duplicate-ID counts indicate data entry "
-        "problems at the source. Fixing this at registration prevents downstream flags."
-    )
+    col_a.metric("Total Records in File", meta["total_raw"])
+    col_b.metric("Missing Emirates ID", meta["missing_ids_raw"])
+    col_c.metric("Duplicate Emirates IDs", meta["duplicate_ids_raw"])
+    st.info("💡 Fixing missing and duplicate IDs at the source prevents downstream flags.")
