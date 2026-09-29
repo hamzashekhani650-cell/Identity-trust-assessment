@@ -15,27 +15,13 @@ st.set_page_config(page_title="Identity Trust Assessment", layout="wide")
 st.title("Identity Trust Assessment")
 st.caption("Five-dimension trust layer for patient identity resolution in HIEs")
 
-# ============================================================
-# COLOR OPTIONS (single color for all bars)
-# ============================================================
 COLOR_OPTIONS = {
-    "Blue":    "#1E90FF",
-    "Pink":    "#FF69B4",
-    "Red":     "#FF0000",
-    "Orange":  "#FFA500",
-    "Purple":  "#800080",
-    "Green":   "#32CD32",
-    "Teal":    "#008080",
-    "Magenta": "#FF00FF",
-    "Indigo":  "#4B0082",
-    "Black":   "#000000",
-    "Gray":    "#808080",
-    "Gold":    "#FFD700",
+    "Blue":    "#1E90FF", "Pink": "#FF69B4", "Red": "#FF0000",
+    "Orange":  "#FFA500", "Purple": "#800080", "Green": "#32CD32",
+    "Teal":    "#008080", "Magenta": "#FF00FF", "Indigo": "#4B0082",
+    "Black":   "#000000", "Gray": "#808080", "Gold": "#FFD700",
 }
 
-# ============================================================
-# CUSTOM PROGRESS BAR (single color, chosen by user)
-# ============================================================
 def render_dimension_bar(label, score, color):
     pct = int(score * 100)
     html = f"""
@@ -51,17 +37,12 @@ def render_dimension_bar(label, score, color):
     """
     st.markdown(html, unsafe_allow_html=True)
 
-# ============================================================
-# SIDEBAR
-# ============================================================
 with st.sidebar:
     st.subheader("Configuration")
-
     selected_color_name = st.selectbox("🎨 Bar Color", list(COLOR_OPTIONS.keys()))
     selected_color = COLOR_OPTIONS[selected_color_name]
-
     st.warning("⚠️ **Privacy Notice:** This demo uses synthetic data only. Do not upload real patient health information (PHI).")
-
+    
     sample_data = pd.DataFrame({
         "emirates_id": ["784-1985-1234567-1", "", "784-1985-1234567-1"],
         "given_name": ["Ahmed", "Raj", "Fatima"],
@@ -75,11 +56,8 @@ with st.sidebar:
     st.download_button(
         label="📄 Download Sample CSV",
         data=sample_data.to_csv(index=False).encode("utf-8"),
-        file_name="sample_batch.csv",
-        mime="text/csv",
-        use_container_width=True,
+        file_name="sample_batch.csv", mime="text/csv", use_container_width=True,
     )
-
     uploaded_file = st.file_uploader("Upload patient records (CSV)", type=["csv"])
 
 if uploaded_file is None:
@@ -87,15 +65,40 @@ if uploaded_file is None:
     st.stop()
 
 # ============================================================
-# DATA PROCESSING
+# SMART COLUMN MAPPING (The Fix)
 # ============================================================
 df = pd.read_csv(uploaded_file)
+df.columns = [str(c).strip() for c in df.columns]
+
+column_synonyms = {
+    "emirates_id": ["emirates_id", "Emirates ID", "ID", "Identifier", "emirates id", "EmiratesID", "National ID"],
+    "given_name": ["given_name", "First Name", "FirstName", "Given Name", "given name", "GivenName"],
+    "family_name": ["family_name", "Last Name", "LastName", "Surname", "Family Name", "family name", "FamilyName"],
+    "date_of_birth": ["date_of_birth", "DOB", "Date of Birth", "BirthDate", "Birth Date", "date of birth", "DOB "],
+    "nationality": ["nationality", "Nationality", "Country"],
+    "source_facility": ["source_facility", "Facility", "Hospital", "Source Facility", "source facility"],
+    "registration_date": ["registration_date", "Registration Date", "Reg Date", "registration date"],
+    "canonical_id": ["canonical_id", "Canonical ID", "Patient ID", "MRN", "canonical id", "PatientID"]
+}
+
+# Automatically map synonyms to expected internal names
+for target, options in column_synonyms.items():
+    for opt in options:
+        if opt in df.columns:
+            df = df.rename(columns={opt: target})
+            break
+
 required_cols = ["given_name", "family_name", "date_of_birth"]
 missing_cols = [c for c in required_cols if c not in df.columns]
 if missing_cols:
-    st.error(f"Missing required columns in CSV: {missing_cols}")
+    st.error(f"Missing required columns in CSV. Could not find columns for: {', '.join(missing_cols)}")
+    st.info(f"Columns currently in your file: {', '.join(df.columns)}")
+    st.info("Please rename your columns to include 'given_name', 'family_name', and 'date_of_birth'")
     st.stop()
 
+# ============================================================
+# DATA PROCESSING
+# ============================================================
 cv = CrossRecordValidator()
 results = []
 
@@ -137,28 +140,16 @@ for index, row in df.iterrows():
                         if owner_id != rec.canonical_id:
                             colliding_id = owner_id
                             break
-                explanation = (
-                    f"FORENSIC COLLISION: Identifier '{rec.emirates_id}' is already registered "
-                    f"to patient {colliding_id}. This record claims to be "
-                    f"{rec.given_name} {rec.family_name} (DOB: {rec.date_of_birth}), "
-                    f"which is a different identity."
-                )
+                explanation = (f"FORENSIC COLLISION: Identifier '{rec.emirates_id}' is already registered "
+                               f"to patient {colliding_id}. This record claims to be {rec.given_name} {rec.family_name} "
+                               f"(DOB: {rec.date_of_birth}), which is a different identity.")
                 primary_issue = "Identifier Collision"
             elif weakest_val == 0.5:
-                explanation = (
-                    f"POTENTIAL COLLISION: Name ({rec.given_name} {rec.family_name}) and "
-                    f"DOB ({rec.date_of_birth}) match an existing patient, but the identifier differs."
-                )
+                explanation = (f"POTENTIAL COLLISION: Name ({rec.given_name} {rec.family_name}) and "
+                               f"DOB ({rec.date_of_birth}) match an existing patient, but the identifier differs.")
                 primary_issue = "Potential Name/DOB Collision"
         elif weakest_dim == "completeness":
-            missing_fields = [
-                f for f, v in [
-                    ("Emirates ID", rec.emirates_id),
-                    ("Given Name", rec.given_name),
-                    ("Family Name", rec.family_name),
-                    ("DOB", rec.date_of_birth),
-                ] if not v
-            ]
+            missing_fields = [f for f, v in [("Emirates ID", rec.emirates_id), ("Given Name", rec.given_name), ("Family Name", rec.family_name), ("DOB", rec.date_of_birth)] if not v]
             explanation = f"INCOMPLETE DATA: Missing required fields: {', '.join(missing_fields)}."
             primary_issue = "Missing Demographics"
         elif weakest_dim == "provenance":
@@ -175,21 +166,14 @@ for index, row in df.iterrows():
             primary_issue = f"Low {weakest_dim} Score"
 
     results.append({
-        "canonical_id": rec.canonical_id,
-        "given_name": rec.given_name,
-        "family_name": rec.family_name,
-        "source_facility": rec.source_facility,
-        "trust_score": round(score, 3),
-        "decision": decision,
-        "explanation": explanation,
-        "primary_issue": primary_issue,
-        "dim_completeness": dims["completeness"],
-        "dim_temporal": dims["temporal"],
-        "dim_identity": dims["identity"],
-        "dim_provenance": dims["provenance"],
+        "canonical_id": rec.canonical_id, "given_name": rec.given_name,
+        "family_name": rec.family_name, "source_facility": rec.source_facility,
+        "trust_score": round(score, 3), "decision": decision,
+        "explanation": explanation, "primary_issue": primary_issue,
+        "dim_completeness": dims["completeness"], "dim_temporal": dims["temporal"],
+        "dim_identity": dims["identity"], "dim_provenance": dims["provenance"],
         "dim_cross_record": dims["cross_record"],
     })
-
     cv.add_record(rec)
 
 results_df = pd.DataFrame(results)
@@ -200,55 +184,42 @@ results_df = pd.DataFrame(results)
 tab1, tab2, tab3 = st.tabs(["📊 Executive Dashboard", "🚩 Flagged Records", "📄 Batch Results"])
 
 with tab1:
-    total = len(results_df)
-    auto = len(results_df[results_df["decision"] == "AUTO_LINK"])
-    flag = len(results_df[results_df["decision"] == "LINK_WITH_FLAG"])
-    quar = len(results_df[results_df["decision"] == "QUARANTINE"])
-
     col1, col2, col3, col4 = st.columns(4)
-    col1.metric("Total Records", total)
-    col2.metric("✅ Auto-Linked", auto)
-    col3.metric("⚠️ Flagged", flag)
-    col4.metric("🚨 Quarantined", quar)
+    col1.metric("Total Records", len(results_df))
+    col2.metric("✅ Auto-Linked", len(results_df[results_df["decision"] == "AUTO_LINK"]))
+    col3.metric("⚠️ Flagged", len(results_df[results_df["decision"] == "LINK_WITH_FLAG"]))
+    col4.metric("🚨 Quarantined", len(results_df[results_df["decision"] == "QUARANTINE"]))
 
     st.divider()
-
     st.subheader("Decision Breakdown")
     decision_counts = results_df["decision"].value_counts().reset_index()
     decision_counts.columns = ["Decision", "Count"]
     chart1 = alt.Chart(decision_counts).mark_bar(color="#4A6FA5").encode(
         x=alt.X("Count:Q", title="Number of Records"),
-        y=alt.Y("Decision:N", sort="-x", title=""),
-        tooltip=["Decision", "Count"],
+        y=alt.Y("Decision:N", sort="-x", title=""), tooltip=["Decision", "Count"],
     ).properties(height=250)
     st.altair_chart(chart1, use_container_width=True)
 
     st.subheader("Facility Risk Profile")
-    st.markdown("Which hospitals are sending the most problematic data?")
     flagged_df = results_df[results_df["decision"].isin(["LINK_WITH_FLAG", "QUARANTINE"])]
     if not flagged_df.empty:
         fac_counts = flagged_df["source_facility"].value_counts().reset_index()
         fac_counts.columns = ["Facility", "Flagged Count"]
         chart2 = alt.Chart(fac_counts).mark_bar(color="#C62828").encode(
             x=alt.X("Flagged Count:Q", title="Number of Flagged Records"),
-            y=alt.Y("Facility:N", sort="-x", title=""),
-            tooltip=["Facility", "Flagged Count"],
+            y=alt.Y("Facility:N", sort="-x", title=""), tooltip=["Facility", "Flagged Count"],
         ).properties(height=300)
         st.altair_chart(chart2, use_container_width=True)
     else:
         st.info("No records were flagged in this batch.")
 
     st.subheader("Dimension Scoring Averages")
-    st.markdown("Where is data quality failing across the five dimensions?")
-    dim_means = results_df[[
-        "dim_completeness", "dim_temporal", "dim_identity", "dim_provenance", "dim_cross_record"
-    ]].mean().reset_index()
+    dim_means = results_df[["dim_completeness", "dim_temporal", "dim_identity", "dim_provenance", "dim_cross_record"]].mean().reset_index()
     dim_means.columns = ["Dimension", "Average Score"]
     dim_means["Dimension"] = ["Completeness", "Temporal", "Identity", "Provenance", "Cross-Record"]
     chart3 = alt.Chart(dim_means).mark_bar(color="#2E7D32").encode(
         x=alt.X("Average Score:Q", scale=alt.Scale(domain=[0, 1])),
-        y=alt.Y("Dimension:N", sort="-x", title=""),
-        tooltip=["Dimension", "Average Score"],
+        y=alt.Y("Dimension:N", sort="-x", title=""), tooltip=["Dimension", "Average Score"],
     ).properties(height=250)
     st.altair_chart(chart3, use_container_width=True)
 
@@ -257,42 +228,31 @@ with tab2:
     if not flagged.empty:
         st.subheader("🚩 Flagged Records for Manual Review")
         st.warning(f"{len(flagged)} record(s) require manual review.")
-
         for _, row in flagged.iterrows():
             with st.expander(f"{row['canonical_id']} - {row['given_name']} {row['family_name']} ({row['decision']})"):
                 st.write(f"**Trust Score:** {row['trust_score']}")
                 st.write(f"**Primary Issue:** {row['primary_issue']}")
                 st.info(f"**Forensic Detail:** {row['explanation']}")
                 st.write("**Dimension Scores:**")
-
                 render_dimension_bar("Completeness", row["dim_completeness"], selected_color)
                 render_dimension_bar("Temporal", row["dim_temporal"], selected_color)
                 render_dimension_bar("Identity", row["dim_identity"], selected_color)
                 render_dimension_bar("Provenance", row["dim_provenance"], selected_color)
                 render_dimension_bar("Cross-Record", row["dim_cross_record"], selected_color)
-
         st.write("")
-        csv_flagged = flagged.to_csv(index=False).encode("utf-8")
         st.download_button(
             label="📥 Download Flagged Records (CSV)",
-            data=csv_flagged,
-            file_name="flagged_identity_records.csv",
-            mime="text/csv",
+            data=flagged.to_csv(index=False).encode("utf-8"),
+            file_name="flagged_identity_records.csv", mime="text/csv",
         )
     else:
         st.success("All records processed cleanly. No flags raised.")
 
 with tab3:
     st.subheader("Batch Results")
-    st.markdown(
-        results_df[[
-            "canonical_id", "given_name", "family_name", "trust_score", "decision", "primary_issue"
-        ]].to_markdown(index=False)
-    )
-
+    st.markdown(results_df[["canonical_id", "given_name", "family_name", "trust_score", "decision", "primary_issue"]].to_markdown(index=False))
     st.download_button(
         label="📥 Download Full Scored Batch (CSV)",
         data=results_df.to_csv(index=False).encode("utf-8"),
-        file_name="full_scored_batch.csv",
-        mime="text/csv",
+        file_name="full_scored_batch.csv", mime="text/csv",
     )
