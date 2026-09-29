@@ -90,9 +90,7 @@ if uploaded_file is not None:
     results_df = pd.DataFrame(results)
     
     st.subheader("Batch Results")
-    st.table(
-        results_df[["canonical_id", "given_name", "family_name", "trust_score", "decision", "explanation"]]
-    )
+    st.markdown(results_df[["canonical_id", "given_name", "family_name", "trust_score", "decision", "explanation"]].to_markdown(index=False))
 
     flagged = results_df[results_df["decision"].isin(["LINK_WITH_FLAG", "QUARANTINE"])]
     
