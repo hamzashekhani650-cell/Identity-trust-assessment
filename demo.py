@@ -51,7 +51,7 @@ def normalize_id(value):
     return str(value).strip().replace(" ", "").replace("-", "")
 
 def normalize_date(value):
-    """Convert any common date format to ISO 8601 (YYYY-MM-DD)."""
+    """Convert common date formats to ISO 8601 (YYYY-MM-DD)."""
     if pd.isna(value) or value is None:
         return ""
     if isinstance(value, pd.Timestamp):
@@ -59,10 +59,8 @@ def normalize_date(value):
     s = str(value).strip()
     if s == "" or s.lower() in ("nan", "nat"):
         return ""
-    # Already ISO
     if len(s) == 10 and s[4] == "-":
         return s
-    # Try to parse — dayfirst=True handles DD/MM/YYYY, DD-MM-YYYY, etc.
     try:
         parsed = pd.to_datetime(s, dayfirst=True, errors="coerce")
         if pd.isna(parsed):
@@ -90,7 +88,6 @@ def answer_question(question, results_df):
             "It does not resolve, merge, or correct any records."
         )
 
-    # Issue definitions
     issue_defs = {
         "identifier collision": "An identifier collision occurs when two different patients are assigned the same Emirates ID. This is a critical safety risk because one patient's medical history can be attached to another patient's record. The record is quarantined for manual review.",
         "potential collision": "A potential collision occurs when the name and date of birth match an existing patient, but the identifier differs. This could indicate a duplicate registration or a name-based spoof attempt.",
@@ -103,7 +100,6 @@ def answer_question(question, results_df):
         if key in q:
             return val
 
-    # Count by facility
     if "how many" in q:
         for fac in results_df["source_facility"].unique():
             if fac and str(fac).lower() in q:
@@ -111,7 +107,6 @@ def answer_question(question, results_df):
                 flagged = subset[subset["decision"].isin(["LINK_WITH_FLAG", "QUARANTINE"])]
                 return f"Out of **{len(subset)}** records from **{fac}**, **{len(flagged)}** were flagged or quarantined."
 
-    # Search by record ID
     for cid in results_df["canonical_id"].astype(str):
         if cid.lower() in q:
             row = results_df[results_df["canonical_id"].astype(str) == cid].iloc[0]
@@ -123,7 +118,6 @@ def answer_question(question, results_df):
                 f"- **Forensic Detail:** {row['explanation']}"
             )
 
-    # Search by name (need at least 5 chars to avoid noise)
     for _, row in results_df.iterrows():
         name = f"{row['given_name']} {row['family_name']}".lower()
         if len(name) >= 5 and name in q:
@@ -144,11 +138,6 @@ with st.sidebar:
     st.subheader("Configuration")
     selected_color_name = st.selectbox("🎨 Bar Color", list(COLOR_OPTIONS.keys()))
     selected_color = COLOR_OPTIONS[selected_color_name]
-
-    st.markdown("### ⚙️ Sensitivity Thresholds")
-    st.markdown("Lower thresholds will reduce the number of flagged records.")
-    auto_threshold = st.slider("Auto-Link Threshold", 0.5, 1.0, 0.952, 0.01)
-    quar_threshold = st.slider("Quarantine Threshold", 0.0, 0.8, 0.571, 0.01)
 
     st.warning("⚠️ **Privacy Notice:** This demo uses synthetic data only. Do not upload real patient health information (PHI).")
 
@@ -247,7 +236,7 @@ for index, row in df.iterrows():
         "cross_record": cv.validate(rec),
     }
     score = compute_trust_score(**dims)
-    decision = route_decision_hard(score, dims["cross_record"], auto_threshold, quar_threshold)
+    decision = route_decision_hard(score, dims["cross_record"])
     log_decision(rec, dims, score, decision)
 
     explanation = "Record is clean and trusted."
