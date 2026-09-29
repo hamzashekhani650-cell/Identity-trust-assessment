@@ -1,5 +1,6 @@
 import streamlit as st
 import pandas as pd
+import os
 from trust_layer.record import PatientRecord
 from trust_layer.validators import (
     validate_completeness, validate_temporal,
@@ -10,13 +11,44 @@ from trust_layer.scoring import compute_trust_score
 from trust_layer.router import route_decision_hard
 from trust_layer.audit import log_decision
 
+try:
+    from batch.report import generate_report
+    PDF_AVAILABLE = True
+except ImportError:
+    PDF_AVAILABLE = False
+
 st.set_page_config(page_title="Identity Trust Assessment", layout="wide")
 st.title("Identity Trust Assessment")
 st.caption("Five-dimension trust layer for patient identity resolution in HIEs")
 
+# ============================================================
+# ADDITION 1: PRIVACY WARNING BANNER
+# ============================================================
+st.warning("⚠️ **Privacy Notice:** This demo uses synthetic data only. Do not upload real patient health information (PHI).")
+
 st.markdown("""
 **Instructions:** Upload a CSV containing patient records. The trust layer will assess each record and flag any identity collisions or low-trust records for review.
 """)
+
+# ============================================================
+# ADDITION 2: SAMPLE CSV DOWNLOAD
+# ============================================================
+sample_data = pd.DataFrame({
+    "emirates_id": ["784-1985-1234567-1", "", "784-1985-1234567-1"],
+    "given_name": ["Ahmed", "Raj", "Fatima"],
+    "family_name": ["Al-Mansoori", "Kumar", "Al-Zahra"],
+    "date_of_birth": ["1985-03-15", "1990-07-22", "1992-01-01"],
+    "nationality": ["UAE", "India", "UAE"],
+    "source_facility": ["Cleveland Clinic Abu Dhabi", "Al Noor Hospital", "SSMC"],
+    "registration_date": ["2024-01-10", "2024-02-15", "2024-03-20"],
+    "canonical_id": ["P001", "P002", "P003"]
+})
+st.download_button(
+    label="📄 Download Sample CSV to Test",
+    data=sample_data.to_csv(index=False).encode('utf-8'),
+    file_name='sample_batch.csv',
+    mime='text/csv',
+)
 
 uploaded_file = st.file_uploader("Upload patient records (CSV)", type=["csv"])
 
@@ -88,18 +120,79 @@ if uploaded_file is not None:
         cv.add_record(rec)
 
     results_df = pd.DataFrame(results)
-    
+
+    st.divider()
+    total = len(results_df)
+    auto = len(results_df[results_df["decision"] == "AUTO_LINK"])
+    flag = len(results_df[results_df["decision"] == "LINK_WITH_FLAG"])
+    quar = len(results_df[results_df["decision"] == "QUARANTINE"])
+
+    col1, col2, col3, col4 = st.columns(4)
+    col1.metric("Total Records", total)
+    col2.metric("✅ Auto-Linked", auto)
+    col3.metric("⚠️ Flagged", flag)
+    col4.metric("🚨 Quarantined", quar)
+
+    st.subheader("Decision Breakdown")
+    decision_counts = results_df["decision"].value_counts()
+    st.bar_chart(decision_counts)
+
+    st.divider()
     st.subheader("Batch Results")
     st.markdown(results_df[["canonical_id", "given_name", "family_name", "trust_score", "decision", "explanation"]].to_markdown(index=False))
+
+    # ============================================================
+    # ADDITION 3: DOWNLOAD FULL SCORED CSV
+    # ============================================================
+    st.download_button(
+        label="📥 Download Full Scored Batch (CSV)",
+        data=results_df.to_csv(index=False).encode('utf-8'),
+        file_name='full_scored_batch.csv',
+        mime='text/csv',
+    )
 
     flagged = results_df[results_df["decision"].isin(["LINK_WITH_FLAG", "QUARANTINE"])]
     
     if not flagged.empty:
+        st.divider()
         st.subheader("⚠️ Flagged Records for Review")
         st.warning(f"{len(flagged)} record(s) require manual review.")
+        
         for _, row in flagged.iterrows():
             with st.expander(f"{row['canonical_id']} - {row['given_name']} {row['family_name']} ({row['decision']})"):
                 st.write(f"**Trust Score:** {row['trust_score']}")
                 st.write(f"**Reason:** {row['explanation']}")
+        
+        st.write("")
+        csv = flagged.to_csv(index=False).encode('utf-8')
+        st.download_button(
+            label="📥 Download Flagged Records for Review",
+            data=csv,
+            file_name='flagged_identity_records.csv',
+            mime='text/csv',
+        )
     else:
         st.success("All records processed cleanly. No flags raised.")
+
+    if PDF_AVAILABLE:
+        st.divider()
+        st.subheader("📄 Regulatory Audit Trail")
+        st.write("Generate a PDF report mapping flagged records to DOH Standard clauses.")
+        
+        if st.button("Generate PDF Audit Report"):
+            with st.spinner("Generating PDF..."):
+                temp_csv_path = "temp_scored_batch.csv"
+                results_df.to_csv(temp_csv_path, index=False)
+                pdf_path = "trust_report.pdf"
+                
+                try:
+                    generate_report(temp_csv_path, pdf_path, title="Identity Trust Batch Report")
+                    with open(pdf_path, "rb") as f:
+                        st.download_button(
+                            label="📥 Download PDF",
+                            data=f,
+                            file_name="Identity_Trust_Report.pdf",
+                            mime="application/pdf"
+                        )
+                except Exception as e:
+                    st.error(f"Could not generate PDF: {e}")
