@@ -1,4 +1,5 @@
 import io
+import re
 import streamlit as st
 import pandas as pd
 import altair as alt
@@ -23,6 +24,45 @@ COLOR_OPTIONS = {
     "Black": "#000000", "Gray": "#808080", "Gold": "#FFD700",
 }
 PREFIXES = ["mr.", "mrs.", "ms.", "dr.", "mr ", "mrs ", "ms ", "dr "]
+
+# ============================================================
+# REGION PROFILES
+# In production, each would ship as a separate module in trust_layer.
+# For the demo, they are configs that swap the ID validator and labels.
+# ============================================================
+REGION_PROFILES = {
+    "UAE (DOH)": {
+        "id_label": "Emirates ID",
+        "id_placeholder": "784-1985-1234567-1",
+        "id_pattern": r"^784\d{12}$",       # 784 + 12 digits (after normalization)
+        "regulatory_body": "DOH",
+        "trusted_facilities": [
+            "Cleveland Clinic Abu Dhabi", "Ssmc", "Al Noor Hospital",
+            "Tawam Hospital", "Sheikh Khalifa Medical City",
+        ],
+    },
+    "India (ABDM)": {
+        "id_label": "ABHA / Aadhaar",
+        "id_placeholder": "1234-5678-9012",
+        "id_pattern": r"^\d{12}$",          # 12-digit Aadhaar / ABHA
+        "regulatory_body": "ABDM",
+        "trusted_facilities": [
+            "Manipal Hospital", "Apollo Hospital", "Fortis Healthcare",
+            "Max Healthcare", "AIIMS",
+        ],
+    },
+    "UK (NHS)": {
+        "id_label": "NHS Number",
+        "id_placeholder": "123 456 7890",
+        "id_pattern": r"^\d{10}$",          # 10-digit NHS number
+        "regulatory_body": "NHS Digital",
+        "trusted_facilities": [
+            "Guy's and St Thomas'", "King's College Hospital",
+            "Royal Free London", "Manchester Royal Infirmary",
+            "St Mary's Hospital",
+        ],
+    },
+}
 
 def render_dimension_bar(label, score, color):
     pct = int(score * 100)
@@ -79,17 +119,29 @@ def normalize_date(value):
         return s
 
 # ============================================================
+# REGION-AWARE ID VALIDATOR
+# Wraps trust_layer's identity check to support other regions.
+# In production this logic lives inside trust_layer/validators.py.
+# ============================================================
+def validate_identity_for_region(rec, region_config):
+    if not rec.emirates_id:
+        return 0.0
+    if re.match(region_config["id_pattern"], rec.emirates_id):
+        return 1.0
+    return 0.3   # partial credit: has an ID, but format doesn't match region standard
+
+# ============================================================
 # CACHED PROCESSING PIPELINE
-# This is the biggest speed win. The scoring pipeline runs
-# once per unique file. Changing color/filters won't re-run it.
 # ============================================================
 @st.cache_data(show_spinner="Running trust assessment...")
-def run_trust_assessment(file_bytes):
+def run_trust_assessment(file_bytes, region_name):
+    region_config = REGION_PROFILES[region_name]
+
     df = pd.read_csv(io.BytesIO(file_bytes))
     df.columns = [str(c).strip() for c in df.columns]
 
     column_synonyms = {
-        "emirates_id": ["emirates_id", "Emirates ID", "ID", "Identifier", "emirates id", "EmiratesID", "National ID"],
+        "emirates_id": ["emirates_id", "Emirates ID", "ID", "Identifier", "emirates id", "EmiratesID", "National ID", "ABHA", "Aadhaar", "NHS Number"],
         "given_name": ["given_name", "First Name", "FirstName", "Given Name", "given name", "GivenName"],
         "family_name": ["family_name", "Last Name", "LastName", "Surname", "Family Name", "family name", "FamilyName"],
         "date_of_birth": ["date_of_birth", "DOB", "Date of Birth", "BirthDate", "Birth Date", "date of birth", "DOB "],
@@ -109,7 +161,6 @@ def run_trust_assessment(file_bytes):
     if missing_cols:
         return None, {"error": f"Missing columns: {', '.join(missing_cols)}", "found": list(df.columns)}
 
-    # Normalization with change tracking
     df["_orig_given"] = df["given_name"].astype(str)
     df["_orig_family"] = df["family_name"].astype(str)
     df["_orig_dob"] = df["date_of_birth"].astype(str)
@@ -150,13 +201,16 @@ def run_trust_assessment(file_bytes):
         dims = {
             "completeness": validate_completeness(rec),
             "temporal": validate_temporal(rec),
-            "identity": validate_identity_consistency(rec),
+            "identity": validate_identity_for_region(rec, region_config),
             "provenance": validate_provenance(rec),
             "cross_record": cv.validate(rec),
         }
         score = compute_trust_score(**dims)
         decision = route_decision_hard(score, dims["cross_record"])
         log_decision(rec, dims, score, decision)
+
+        id_label = region_config["id_label"]
+        reg_body = region_config["regulatory_body"]
 
         explanation = "Record is clean and trusted."
         primary_issue = "None"
@@ -171,16 +225,16 @@ def run_trust_assessment(file_bytes):
                             if owner_id != rec.canonical_id:
                                 colliding_id = owner_id
                                 break
-                    explanation = (f"FORENSIC COLLISION: Identifier '{rec.emirates_id}' is already registered "
+                    explanation = (f"FORENSIC COLLISION: {id_label} '{rec.emirates_id}' is already registered "
                                    f"to patient {colliding_id}. This record claims to be {rec.given_name} {rec.family_name} "
                                    f"(DOB: {rec.date_of_birth}), which is a different identity.")
                     primary_issue = "Identifier Collision"
                 elif weakest_val == 0.5:
                     explanation = (f"POTENTIAL COLLISION: Name ({rec.given_name} {rec.family_name}) and "
-                                   f"DOB ({rec.date_of_birth}) match an existing patient, but the identifier differs.")
+                                   f"DOB ({rec.date_of_birth}) match an existing patient, but the {id_label} differs.")
                     primary_issue = "Potential Name/DOB Collision"
             elif weakest_dim == "completeness":
-                missing_fields = [f for f, v in [("Emirates ID", rec.emirates_id), ("Given Name", rec.given_name), ("Family Name", rec.family_name), ("DOB", rec.date_of_birth)] if not v]
+                missing_fields = [f for f, v in [(id_label, rec.emirates_id), ("Given Name", rec.given_name), ("Family Name", rec.family_name), ("DOB", rec.date_of_birth)] if not v]
                 explanation = f"INCOMPLETE DATA: Missing required fields: {', '.join(missing_fields)}."
                 primary_issue = "Missing Demographics"
             elif weakest_dim == "provenance":
@@ -190,7 +244,7 @@ def run_trust_assessment(file_bytes):
                 explanation = f"TEMPORAL ERROR: The date of birth '{rec.date_of_birth}' could not be normalized to a valid ISO date (YYYY-MM-DD)."
                 primary_issue = "Temporal Validity Error"
             elif weakest_dim == "identity":
-                explanation = f"IDENTITY INCONSISTENCY: The Emirates ID '{rec.emirates_id}' format is malformed."
+                explanation = f"IDENTITY INCONSISTENCY: The {id_label} '{rec.emirates_id}' does not match the {reg_body} format."
                 primary_issue = "Malformed Identifier"
             else:
                 explanation = f"Flagged due to low score in {weakest_dim}."
@@ -208,12 +262,9 @@ def run_trust_assessment(file_bytes):
         cv.add_record(rec)
 
     results_df = pd.DataFrame(results)
-
     meta = {
-        "total_raw": total_raw,
-        "missing_ids_raw": missing_ids_raw,
-        "missing_dob_raw": missing_dob_raw,
-        "duplicate_ids_raw": duplicate_ids_raw,
+        "total_raw": total_raw, "missing_ids_raw": missing_ids_raw,
+        "missing_dob_raw": missing_dob_raw, "duplicate_ids_raw": duplicate_ids_raw,
         "total_normalized": total_normalized,
     }
     return results_df, meta, df
@@ -223,6 +274,14 @@ def run_trust_assessment(file_bytes):
 # ============================================================
 with st.sidebar:
     st.subheader("Configuration")
+
+    selected_region = st.selectbox(
+        "🌍 Region Profile",
+        list(REGION_PROFILES.keys()),
+        help="Determines the ID format, trusted facilities, and regulatory references used for scoring.",
+    )
+    region = REGION_PROFILES[selected_region]
+
     selected_color_name = st.selectbox("🎨 Bar Color", list(COLOR_OPTIONS.keys()))
     selected_color = COLOR_OPTIONS[selected_color_name]
 
@@ -249,9 +308,8 @@ if uploaded_file is None:
     st.info("👈 Please upload a CSV file in the sidebar to begin the assessment.")
     st.stop()
 
-# Read file bytes once (so caching works)
 file_bytes = uploaded_file.getvalue()
-result = run_trust_assessment(file_bytes)
+result = run_trust_assessment(file_bytes, selected_region)
 
 if result[0] is None:
     st.error(f"Missing required columns. Found: {result[1]['found']}")
@@ -312,7 +370,6 @@ with tab1:
 
 with tab2:
     flagged = results_df[results_df["decision"].isin(["LINK_WITH_FLAG", "QUARANTINE"])].copy()
-
     if flagged.empty:
         st.success("All records processed cleanly. No flags raised.")
     else:
@@ -344,9 +401,6 @@ with tab2:
 
         st.divider()
 
-        # ============================================================
-        # SHOW-COUNT CONTROL — avoids rendering thousands of expanders
-        # ============================================================
         SHOW_STEP = 100
         if "show_count" not in st.session_state:
             st.session_state.show_count = SHOW_STEP
@@ -368,7 +422,6 @@ with tab2:
                 render_dimension_bar("Provenance", row["dim_provenance"], selected_color)
                 render_dimension_bar("Cross-Record", row["dim_cross_record"], selected_color)
 
-        # Load-more button
         if len(filtered) > st.session_state.show_count:
             if st.button("🔽 Load more records"):
                 st.session_state.show_count += SHOW_STEP
@@ -383,7 +436,6 @@ with tab2:
 
 with tab3:
     st.subheader("Batch Results")
-    # Limit table render if very large
     if len(results_df) > 500:
         st.caption(f"Showing first 500 of {len(results_df)} records. Download the CSV for the full list.")
         st.markdown(results_df.head(500)[["canonical_id", "given_name", "family_name", "trust_score", "decision", "primary_issue"]].to_markdown(index=False))
@@ -404,11 +456,40 @@ with tab4:
     )
     st.metric("Records Normalized", meta["total_normalized"])
 
+    # ============================================================
+    # DOWNLOAD CLEANED / STANDARDIZED DATA
+    # This is the "standalone product" — a clean CSV back to the source hospital.
+    # ============================================================
+    st.divider()
+    st.subheader("📤 Export Standardized Data")
+    st.markdown(
+        "Download the **cleaned and standardized** version of your file. "
+        "Column names are mapped to the canonical schema, formats are normalized, "
+        "and honorifics/whitespace are removed. This is useful for hospitals "
+        "that want to standardize their raw exports before loading them into another system."
+    )
+
+    export_cols = ["canonical_id", "emirates_id", "given_name", "family_name",
+                   "date_of_birth", "nationality", "source_facility", "registration_date"]
+    export_cols = [c for c in export_cols if c in df_meta.columns]
+
+    cleaned_export = df_meta[export_cols].copy()
+    cleaned_export = cleaned_export.rename(columns={"emirates_id": region["id_label"].replace(" ", "_").lower()})
+
+    st.download_button(
+        label="📥 Download Cleaned & Standardized CSV",
+        data=cleaned_export.to_csv(index=False).encode("utf-8"),
+        file_name="standardized_records.csv",
+        mime="text/csv",
+        use_container_width=True,
+    )
+
     st.divider()
 
     if meta["total_normalized"] == 0:
         st.info("No formatting differences were detected in this batch.")
     else:
+        st.subheader("Detailed Changes Applied")
         change_rows = []
         for index, row in df_meta.iterrows():
             changes = []
@@ -425,7 +506,6 @@ with tab4:
                 })
 
         change_df = pd.DataFrame(change_rows)
-        # Limit rendering for large logs
         if len(change_df) > 200:
             st.caption(f"Showing first 200 of {len(change_df)} normalized records.")
             st.dataframe(change_df.head(200), use_container_width=True)
@@ -442,6 +522,6 @@ with tab4:
     st.subheader("Source Data Quality Snapshot")
     col_a, col_b, col_c = st.columns(3)
     col_a.metric("Total Records in File", meta["total_raw"])
-    col_b.metric("Missing Emirates ID", meta["missing_ids_raw"])
-    col_c.metric("Duplicate Emirates IDs", meta["duplicate_ids_raw"])
+    col_b.metric(f"Missing {region['id_label']}", meta["missing_ids_raw"])
+    col_c.metric(f"Duplicate {region['id_label']}", meta["duplicate_ids_raw"])
     st.info("💡 Fixing missing and duplicate IDs at the source prevents downstream flags.")
