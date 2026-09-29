@@ -22,6 +22,8 @@ COLOR_OPTIONS = {
     "Black": "#000000", "Gray": "#808080", "Gold": "#FFD700",
 }
 
+PREFIXES = ["mr.", "mrs.", "ms.", "dr.", "mr ", "mrs ", "ms ", "dr "]
+
 def render_dimension_bar(label, score, color):
     pct = int(score * 100)
     html = f"""
@@ -38,20 +40,30 @@ def render_dimension_bar(label, score, color):
     st.markdown(html, unsafe_allow_html=True)
 
 # ============================================================
-# NORMALIZATION HELPERS
+# ENHANCED NORMALIZATION
 # ============================================================
 def normalize_text(value):
     if pd.isna(value) or value is None:
         return ""
-    return str(value).strip().title()
+    s = str(value).strip()
+    # Strip common honorifics
+    lower = s.lower()
+    for prefix in PREFIXES:
+        if lower.startswith(prefix):
+            s = s[len(prefix):].strip()
+            break
+    # Collapse internal whitespace
+    s = " ".join(s.split())
+    return s.title()
 
 def normalize_id(value):
     if pd.isna(value) or value is None or str(value).strip() == "":
         return None
-    return str(value).strip().replace(" ", "").replace("-", "")
+    # Keep only digits — strips hyphens, spaces, dots, etc.
+    digits_only = "".join(c for c in str(value) if c.isdigit())
+    return digits_only if digits_only else None
 
 def normalize_date(value):
-    """Convert common date formats to ISO 8601 (YYYY-MM-DD)."""
     if pd.isna(value) or value is None:
         return ""
     if isinstance(value, pd.Timestamp):
@@ -68,68 +80,6 @@ def normalize_date(value):
         return parsed.strftime("%Y-%m-%d")
     except Exception:
         return s
-
-# ============================================================
-# TEMPLATE-BASED Q&A (Read-Only Explainer)
-# ============================================================
-def answer_question(question, results_df):
-    q = question.lower().strip()
-    if not q:
-        return "Please type a question."
-
-    if "help" in q or "what can" in q or "example" in q:
-        return (
-            "**You can ask things like:**\n"
-            "- *Why was P00320 flagged?* (search by record ID)\n"
-            "- *Find Noura Al Aktoum* (search by name)\n"
-            "- *How many records from SSMC were flagged?* (facility counts)\n"
-            "- *What is an identifier collision?* (issue definitions)\n\n"
-            "**Important:** This assistant only explains decisions already made by the rule-based validators. "
-            "It does not resolve, merge, or correct any records."
-        )
-
-    issue_defs = {
-        "identifier collision": "An identifier collision occurs when two different patients are assigned the same Emirates ID. This is a critical safety risk because one patient's medical history can be attached to another patient's record. The record is quarantined for manual review.",
-        "potential collision": "A potential collision occurs when the name and date of birth match an existing patient, but the identifier differs. This could indicate a duplicate registration or a name-based spoof attempt.",
-        "missing demographics": "The record is missing required identity fields such as Emirates ID, given name, family name, or date of birth. Without these, the record cannot be reliably linked.",
-        "untrusted facility": "The source facility is not in the high-trust tier. Records from untrusted sources require manual verification before linking.",
-        "temporal validity": "The date of birth is either in an unrecognized format or outside a plausible range. Valid dates must be normalizable to the ISO format YYYY-MM-DD.",
-        "malformed identifier": "The Emirates ID format does not match the UAE standard (784-YYYY-XXXXXXX-C).",
-    }
-    for key, val in issue_defs.items():
-        if key in q:
-            return val
-
-    if "how many" in q:
-        for fac in results_df["source_facility"].unique():
-            if fac and str(fac).lower() in q:
-                subset = results_df[results_df["source_facility"] == fac]
-                flagged = subset[subset["decision"].isin(["LINK_WITH_FLAG", "QUARANTINE"])]
-                return f"Out of **{len(subset)}** records from **{fac}**, **{len(flagged)}** were flagged or quarantined."
-
-    for cid in results_df["canonical_id"].astype(str):
-        if cid.lower() in q:
-            row = results_df[results_df["canonical_id"].astype(str) == cid].iloc[0]
-            return (
-                f"**{row['canonical_id']}** ({row['given_name']} {row['family_name']})\n\n"
-                f"- **Decision:** {row['decision']}\n"
-                f"- **Trust Score:** {row['trust_score']}\n"
-                f"- **Primary Issue:** {row['primary_issue']}\n"
-                f"- **Forensic Detail:** {row['explanation']}"
-            )
-
-    for _, row in results_df.iterrows():
-        name = f"{row['given_name']} {row['family_name']}".lower()
-        if len(name) >= 5 and name in q:
-            return (
-                f"**{row['canonical_id']}** ({row['given_name']} {row['family_name']})\n\n"
-                f"- **Decision:** {row['decision']}\n"
-                f"- **Trust Score:** {row['trust_score']}\n"
-                f"- **Primary Issue:** {row['primary_issue']}\n"
-                f"- **Forensic Detail:** {row['explanation']}"
-            )
-
-    return "I couldn't find a match. Type **help** to see example questions."
 
 # ============================================================
 # SIDEBAR
@@ -192,8 +142,13 @@ if missing_cols:
     st.stop()
 
 # ============================================================
-# PRE-CLEANING
+# PRE-CLEANING WITH CHANGE TRACKING
 # ============================================================
+df["_orig_given"] = df["given_name"].astype(str)
+df["_orig_family"] = df["family_name"].astype(str)
+df["_orig_dob"] = df["date_of_birth"].astype(str)
+df["_orig_id"] = df["emirates_id"].astype(str) if "emirates_id" in df.columns else ""
+
 df["given_name"] = df["given_name"].apply(normalize_text)
 df["family_name"] = df["family_name"].apply(normalize_text)
 df["date_of_birth"] = df["date_of_birth"].apply(normalize_date)
@@ -202,13 +157,18 @@ df["nationality"] = df["nationality"].apply(normalize_text)
 if "emirates_id" in df.columns:
     df["emirates_id"] = df["emirates_id"].apply(normalize_id)
 
+df["_changed_name"] = (df["_orig_given"] != df["given_name"].astype(str)) | (df["_orig_family"] != df["family_name"].astype(str))
+df["_changed_dob"] = df["_orig_dob"] != df["date_of_birth"].astype(str)
+df["_changed_id"] = (df["_orig_id"] != df["emirates_id"].astype(str)) & (df["_orig_id"].str.strip() != "")
+
+total_normalized = int((df["_changed_name"] | df["_changed_dob"] | df["_changed_id"]).sum())
+
 # ============================================================
 # DATA PROFILING
 # ============================================================
 total_raw = len(df)
 missing_ids_raw = df["emirates_id"].isna().sum() if "emirates_id" in df.columns else total_raw
 missing_dob_raw = (df["date_of_birth"] == "").sum()
-missing_name_raw = ((df["given_name"] == "") | (df["family_name"] == "")).sum()
 duplicate_ids_raw = df["emirates_id"].duplicated().sum() if "emirates_id" in df.columns else 0
 
 # ============================================================
@@ -291,33 +251,14 @@ for index, row in df.iterrows():
 results_df = pd.DataFrame(results)
 
 # ============================================================
-# LAYOUT: 5 TABS
+# LAYOUT: 4 TABS (main simple tabs + one advanced tucked away)
 # ============================================================
-tab0, tab1, tab2, tab3, tab4 = st.tabs([
-    "🧹 Source Data Quality", "📊 Executive Dashboard",
-    "🚩 Flagged Records", "💬 Ask About a Record", "📄 Batch Results"
+tab1, tab2, tab3, tab4 = st.tabs([
+    "📊 Executive Dashboard",
+    "🚩 Flagged Records",
+    "📄 Batch Results",
+    "🔧 Data Normalization Log",
 ])
-
-with tab0:
-    st.subheader("🧹 Source Data Quality Profile")
-    st.markdown("Before assessing trust, it's important to understand the quality of the incoming file.")
-    col_a, col_b, col_c, col_d = st.columns(4)
-    col_a.metric("Total Records in File", total_raw)
-    col_b.metric("Missing/Blank Emirates ID", missing_ids_raw)
-    col_c.metric("Missing Date of Birth", missing_dob_raw)
-    col_d.metric("Duplicate Emirates IDs in File", duplicate_ids_raw)
-    st.divider()
-    st.subheader("Top 5 Source Facilities by Volume")
-    if "source_facility" in df.columns:
-        fac_vol = df["source_facility"].value_counts().head(5).reset_index()
-        fac_vol.columns = ["Facility", "Record Count"]
-        chart_vol = alt.Chart(fac_vol).mark_bar(color="#6366F1").encode(
-            x=alt.X("Record Count:Q", title="Number of Records"),
-            y=alt.Y("Facility:N", sort="-x", title=""),
-            tooltip=["Facility", "Record Count"],
-        ).properties(height=250)
-        st.altair_chart(chart_vol, use_container_width=True)
-    st.info("💡 **Recommendation:** If missing IDs or duplicate IDs are high, the source hospitals need to improve their registration data entry.")
 
 with tab1:
     col1, col2, col3, col4 = st.columns(4)
@@ -326,6 +267,7 @@ with tab1:
     col3.metric("⚠️ Flagged", len(results_df[results_df["decision"] == "LINK_WITH_FLAG"]))
     col4.metric("🚨 Quarantined", len(results_df[results_df["decision"] == "QUARANTINE"]))
     st.divider()
+
     st.subheader("Decision Breakdown")
     decision_counts = results_df["decision"].value_counts().reset_index()
     decision_counts.columns = ["Decision", "Count"]
@@ -334,7 +276,9 @@ with tab1:
         y=alt.Y("Decision:N", sort="-x", title=""), tooltip=["Decision", "Count"],
     ).properties(height=250)
     st.altair_chart(chart1, use_container_width=True)
+
     st.subheader("Facility Risk Profile")
+    st.markdown("Which facilities produced the most flagged records?")
     flagged_df = results_df[results_df["decision"].isin(["LINK_WITH_FLAG", "QUARANTINE"])]
     if not flagged_df.empty:
         fac_counts = flagged_df["source_facility"].value_counts().reset_index()
@@ -346,6 +290,7 @@ with tab1:
         st.altair_chart(chart2, use_container_width=True)
     else:
         st.info("No records were flagged in this batch.")
+
     st.subheader("Dimension Scoring Averages")
     dim_means = results_df[["dim_completeness", "dim_temporal", "dim_identity", "dim_provenance", "dim_cross_record"]].mean().reset_index()
     dim_means.columns = ["Dimension", "Average Score"]
@@ -357,12 +302,59 @@ with tab1:
     st.altair_chart(chart3, use_container_width=True)
 
 with tab2:
-    flagged = results_df[results_df["decision"].isin(["LINK_WITH_FLAG", "QUARANTINE"])]
-    if not flagged.empty:
+    flagged = results_df[results_df["decision"].isin(["LINK_WITH_FLAG", "QUARANTINE"])].copy()
+
+    if flagged.empty:
+        st.success("All records processed cleanly. No flags raised.")
+    else:
+        # Sort: QUARANTINE first (highest risk), then by trust score ascending
+        priority = {"QUARANTINE": 0, "LINK_WITH_FLAG": 1}
+        flagged["_priority"] = flagged["decision"].map(priority)
+        flagged = flagged.sort_values(["_priority", "trust_score"]).drop(columns="_priority")
+
         st.subheader("🚩 Flagged Records for Manual Review")
         st.warning(f"{len(flagged)} record(s) require manual review.")
-        for _, row in flagged.iterrows():
-            with st.expander(f"{row['canonical_id']} - {row['given_name']} {row['family_name']} ({row['decision']})"):
+
+        # ============================================================
+        # FILTERS
+        # ============================================================
+        fc1, fc2, fc3 = st.columns([2, 2, 1])
+        with fc1:
+            issue_options = sorted(flagged["primary_issue"].unique().tolist())
+            selected_issues = st.multiselect("Filter by issue type", options=issue_options, default=issue_options)
+        with fc2:
+            decision_options = sorted(flagged["decision"].unique().tolist())
+            selected_decisions = st.multiselect("Filter by decision", options=decision_options, default=decision_options)
+        with fc3:
+            st.write("")
+            st.write("")
+
+        filtered = flagged[
+            (flagged["primary_issue"].isin(selected_issues)) &
+            (flagged["decision"].isin(selected_decisions))
+        ]
+
+        st.caption(f"Showing {len(filtered)} of {len(flagged)} flagged records.")
+
+        # ============================================================
+        # BULK ACTION: Copy all IDs
+        # ============================================================
+        all_ids = "\n".join(filtered["canonical_id"].astype(str).tolist())
+        with st.expander("📋 Bulk Actions"):
+            st.markdown("**Copy all filtered record IDs:**")
+            st.code(all_ids, language=None)
+
+        st.divider()
+
+        # ============================================================
+        # RECORD CARDS with copy buttons
+        # ============================================================
+        for _, row in filtered.iterrows():
+            with st.expander(f"{row['canonical_id']} — {row['given_name']} {row['family_name']} ({row['decision']})"):
+                # Copy button via st.code (has built-in copy icon)
+                st.markdown("**Record ID (click the copy icon):**")
+                st.code(row["canonical_id"], language=None)
+
                 st.write(f"**Trust Score:** {row['trust_score']}")
                 st.write(f"**Primary Issue:** {row['primary_issue']}")
                 st.info(f"**Forensic Detail:** {row['explanation']}")
@@ -372,31 +364,70 @@ with tab2:
                 render_dimension_bar("Identity", row["dim_identity"], selected_color)
                 render_dimension_bar("Provenance", row["dim_provenance"], selected_color)
                 render_dimension_bar("Cross-Record", row["dim_cross_record"], selected_color)
+
         st.write("")
         st.download_button(
-            label="📥 Download Flagged Records (CSV)",
-            data=flagged.to_csv(index=False).encode("utf-8"),
+            label="📥 Download Filtered Flagged Records (CSV)",
+            data=filtered.to_csv(index=False).encode("utf-8"),
             file_name="flagged_identity_records.csv", mime="text/csv",
         )
-    else:
-        st.success("All records processed cleanly. No flags raised.")
 
 with tab3:
-    st.subheader("💬 Ask About a Record")
-    st.markdown(
-        "Type a question about any record. This assistant **only explains decisions already made** "
-        "by the rule-based validators. It does not resolve, merge, or correct any records."
-    )
-    question = st.text_input("Your question", placeholder="e.g., Why was P00320 flagged?")
-    if st.button("Ask"):
-        answer = answer_question(question, results_df)
-        st.markdown(answer)
-
-with tab4:
     st.subheader("Batch Results")
     st.markdown(results_df[["canonical_id", "given_name", "family_name", "trust_score", "decision", "primary_issue"]].to_markdown(index=False))
     st.download_button(
         label="📥 Download Full Scored Batch (CSV)",
         data=results_df.to_csv(index=False).encode("utf-8"),
         file_name="full_scored_batch.csv", mime="text/csv",
+    )
+
+with tab4:
+    st.subheader("🔧 Data Normalization Log")
+    st.markdown(
+        "This tab shows exactly what was cleaned or reformatted before scoring. "
+        "Formatting differences (whitespace, casing, date format, honorifics) do **not** "
+        "trigger flags — only real trust failures do."
+    )
+
+    st.metric("Records Normalized", total_normalized, help="Records where at least one field was reformatted.")
+
+    st.divider()
+
+    if total_normalized == 0:
+        st.info("No formatting differences were detected in this batch.")
+    else:
+        st.markdown("### Changes Applied")
+        change_rows = []
+        for index, row in df.iterrows():
+            changes = []
+            if row["_changed_name"]:
+                changes.append(f"Name: '{row['_orig_given']} {row['_orig_family']}' → '{row['given_name']} {row['family_name']}'")
+            if row["_changed_dob"]:
+                changes.append(f"DOB: '{row['_orig_dob']}' → '{row['date_of_birth']}'")
+            if row["_changed_id"]:
+                changes.append(f"ID: '{row['_orig_id']}' → '{row['emirates_id']}'")
+            if changes:
+                change_rows.append({
+                    "canonical_id": row.get("canonical_id", f"ROW_{index}"),
+                    "Changes": " | ".join(changes),
+                })
+
+        change_df = pd.DataFrame(change_rows)
+        st.dataframe(change_df, use_container_width=True)
+
+        st.download_button(
+            label="📥 Download Normalization Log (CSV)",
+            data=change_df.to_csv(index=False).encode("utf-8"),
+            file_name="normalization_log.csv", mime="text/csv",
+        )
+
+    st.divider()
+    st.subheader("Source Data Quality Snapshot")
+    col_a, col_b, col_c = st.columns(3)
+    col_a.metric("Total Records in File", total_raw)
+    col_b.metric("Missing Emirates ID", missing_ids_raw)
+    col_c.metric("Duplicate Emirates IDs", duplicate_ids_raw)
+    st.info(
+        "💡 **Recommendation:** High missing-ID or duplicate-ID counts indicate data entry "
+        "problems at the source. Fixing this at registration prevents downstream flags."
     )
