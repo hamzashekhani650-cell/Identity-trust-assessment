@@ -11,36 +11,30 @@ from trust_layer.scoring import compute_trust_score
 from trust_layer.router import route_decision_hard
 from trust_layer.audit import log_decision
 
-try:
-    from batch.report import generate_report
-    PDF_AVAILABLE = True
-except ImportError:
-    PDF_AVAILABLE = False
-
 st.set_page_config(page_title="Identity Trust Assessment", layout="wide")
 st.title("Identity Trust Assessment")
 st.caption("Five-dimension trust layer for patient identity resolution in HIEs")
 
 # ============================================================
-# COLOR OPTIONS
+# COLOR OPTIONS (single color for all bars)
 # ============================================================
-color_options = {
-    "Blue": "#1E90FF",
-    "Pink": "#FF69B4",
-    "Red": "#FF0000",
-    "Orange": "#FFA500",
-    "Purple": "#800080",
-    "Green": "#32CD32",
-    "Teal": "#008080",
+COLOR_OPTIONS = {
+    "Blue":    "#1E90FF",
+    "Pink":    "#FF69B4",
+    "Red":     "#FF0000",
+    "Orange":  "#FFA500",
+    "Purple":  "#800080",
+    "Green":   "#32CD32",
+    "Teal":    "#008080",
     "Magenta": "#FF00FF",
-    "Indigo": "#4B0082",
-    "Black": "#000000",
-    "Gray": "#808080",
-    "Gold": "#FFD700"
+    "Indigo":  "#4B0082",
+    "Black":   "#000000",
+    "Gray":    "#808080",
+    "Gold":    "#FFD700",
 }
 
 # ============================================================
-# CUSTOM PROGRESS BAR FUNCTION (SINGLE COLOR)
+# CUSTOM PROGRESS BAR (single color, chosen by user)
 # ============================================================
 def render_dimension_bar(label, score, color):
     pct = int(score * 100)
@@ -51,24 +45,23 @@ def render_dimension_bar(label, score, color):
             <span style="color: #6B7280;">{score:.2f}</span>
         </div>
         <div style="background-color: #E5E7EB; border-radius: 6px; height: 12px; width: 100%; overflow: hidden;">
-            <div style="background-color: {color}; width: {pct}%; height: 100%; border-radius: 6px; transition: width 0.5s ease-in-out;"></div>
+            <div style="background-color: {color}; width: {pct}%; height: 100%; border-radius: 6px;"></div>
         </div>
     </div>
     """
     st.markdown(html, unsafe_allow_html=True)
 
 # ============================================================
-# SIDEBAR: INPUTS AND WARNINGS
+# SIDEBAR
 # ============================================================
 with st.sidebar:
     st.subheader("Configuration")
-    
-    # THE NEW SINGLE COLOR PICKER DROPDOWN
-    selected_color_name = st.selectbox("🎨 Bar Color", list(color_options.keys()))
-    selected_color = color_options[selected_color_name]
-    
+
+    selected_color_name = st.selectbox("🎨 Bar Color", list(COLOR_OPTIONS.keys()))
+    selected_color = COLOR_OPTIONS[selected_color_name]
+
     st.warning("⚠️ **Privacy Notice:** This demo uses synthetic data only. Do not upload real patient health information (PHI).")
-    
+
     sample_data = pd.DataFrame({
         "emirates_id": ["784-1985-1234567-1", "", "784-1985-1234567-1"],
         "given_name": ["Ahmed", "Raj", "Fatima"],
@@ -77,14 +70,14 @@ with st.sidebar:
         "nationality": ["UAE", "India", "UAE"],
         "source_facility": ["Cleveland Clinic Abu Dhabi", "Al Noor Hospital", "SSMC"],
         "registration_date": ["2024-01-10", "2024-02-15", "2024-03-20"],
-        "canonical_id": ["P001", "P002", "P003"]
+        "canonical_id": ["P001", "P002", "P003"],
     })
     st.download_button(
         label="📄 Download Sample CSV",
-        data=sample_data.to_csv(index=False).encode('utf-8'),
-        file_name='sample_batch.csv',
-        mime='text/csv',
-        use_container_width=True
+        data=sample_data.to_csv(index=False).encode("utf-8"),
+        file_name="sample_batch.csv",
+        mime="text/csv",
+        use_container_width=True,
     )
 
     uploaded_file = st.file_uploader("Upload patient records (CSV)", type=["csv"])
@@ -108,14 +101,14 @@ results = []
 
 for index, row in df.iterrows():
     rec = PatientRecord(
-        emirates_id=str(row.get('emirates_id', '')).strip() if pd.notna(row.get('emirates_id')) else None,
-        given_name=str(row.get('given_name', '')).strip(),
-        family_name=str(row.get('family_name', '')).strip(),
-        date_of_birth=str(row.get('date_of_birth', '')).strip(),
-        nationality=str(row.get('nationality', '')).strip(),
-        source_facility=str(row.get('source_facility', '')).strip(),
-        registration_date=str(row.get('registration_date', '')).strip(),
-        canonical_id=str(row.get('canonical_id', f'ROW_{index}')).strip()
+        emirates_id=str(row.get("emirates_id", "")).strip() if pd.notna(row.get("emirates_id")) else None,
+        given_name=str(row.get("given_name", "")).strip(),
+        family_name=str(row.get("family_name", "")).strip(),
+        date_of_birth=str(row.get("date_of_birth", "")).strip(),
+        nationality=str(row.get("nationality", "")).strip(),
+        source_facility=str(row.get("source_facility", "")).strip(),
+        registration_date=str(row.get("registration_date", "")).strip(),
+        canonical_id=str(row.get("canonical_id", f"ROW_{index}")).strip(),
     )
 
     dims = {
@@ -131,11 +124,11 @@ for index, row in df.iterrows():
 
     explanation = "Record is clean and trusted."
     primary_issue = "None"
-    
+
     if decision in ("LINK_WITH_FLAG", "QUARANTINE"):
         weakest_dim = min(dims, key=dims.get)
         weakest_val = dims[weakest_dim]
-        
+
         if weakest_dim == "cross_record":
             if weakest_val == 0.0:
                 colliding_id = "Unknown"
@@ -144,16 +137,28 @@ for index, row in df.iterrows():
                         if owner_id != rec.canonical_id:
                             colliding_id = owner_id
                             break
-                explanation = (f"FORENSIC COLLISION: Identifier '{rec.emirates_id}' is already registered "
-                               f"to patient {colliding_id}. This record claims to be {rec.given_name} {rec.family_name} "
-                               f"(DOB: {rec.date_of_birth}), which is a different identity.")
+                explanation = (
+                    f"FORENSIC COLLISION: Identifier '{rec.emirates_id}' is already registered "
+                    f"to patient {colliding_id}. This record claims to be "
+                    f"{rec.given_name} {rec.family_name} (DOB: {rec.date_of_birth}), "
+                    f"which is a different identity."
+                )
                 primary_issue = "Identifier Collision"
             elif weakest_val == 0.5:
-                explanation = (f"POTENTIAL COLLISION: Name ({rec.given_name} {rec.family_name}) and "
-                               f"DOB ({rec.date_of_birth}) match an existing patient, but the identifier differs.")
+                explanation = (
+                    f"POTENTIAL COLLISION: Name ({rec.given_name} {rec.family_name}) and "
+                    f"DOB ({rec.date_of_birth}) match an existing patient, but the identifier differs."
+                )
                 primary_issue = "Potential Name/DOB Collision"
         elif weakest_dim == "completeness":
-            missing_fields = [f for f, v in [("Emirates ID", rec.emirates_id), ("Given Name", rec.given_name), ("Family Name", rec.family_name), ("DOB", rec.date_of_birth)] if not v]
+            missing_fields = [
+                f for f, v in [
+                    ("Emirates ID", rec.emirates_id),
+                    ("Given Name", rec.given_name),
+                    ("Family Name", rec.family_name),
+                    ("DOB", rec.date_of_birth),
+                ] if not v
+            ]
             explanation = f"INCOMPLETE DATA: Missing required fields: {', '.join(missing_fields)}."
             primary_issue = "Missing Demographics"
         elif weakest_dim == "provenance":
@@ -184,15 +189,15 @@ for index, row in df.iterrows():
         "dim_provenance": dims["provenance"],
         "dim_cross_record": dims["cross_record"],
     })
-    
+
     cv.add_record(rec)
 
 results_df = pd.DataFrame(results)
 
 # ============================================================
-# MAIN LAYOUT: TABS
+# MAIN LAYOUT
 # ============================================================
-tab1, tab2, tab3 = st.tabs(["📊 Executive Dashboard", "🚩 Flagged Records", "📄 Regulatory Audit"])
+tab1, tab2, tab3 = st.tabs(["📊 Executive Dashboard", "🚩 Flagged Records", "📄 Batch Results"])
 
 with tab1:
     total = len(results_df)
@@ -207,14 +212,14 @@ with tab1:
     col4.metric("🚨 Quarantined", quar)
 
     st.divider()
-    
+
     st.subheader("Decision Breakdown")
     decision_counts = results_df["decision"].value_counts().reset_index()
     decision_counts.columns = ["Decision", "Count"]
     chart1 = alt.Chart(decision_counts).mark_bar(color="#4A6FA5").encode(
         x=alt.X("Count:Q", title="Number of Records"),
         y=alt.Y("Decision:N", sort="-x", title=""),
-        tooltip=["Decision", "Count"]
+        tooltip=["Decision", "Count"],
     ).properties(height=250)
     st.altair_chart(chart1, use_container_width=True)
 
@@ -227,7 +232,7 @@ with tab1:
         chart2 = alt.Chart(fac_counts).mark_bar(color="#C62828").encode(
             x=alt.X("Flagged Count:Q", title="Number of Flagged Records"),
             y=alt.Y("Facility:N", sort="-x", title=""),
-            tooltip=["Facility", "Flagged Count"]
+            tooltip=["Facility", "Flagged Count"],
         ).properties(height=300)
         st.altair_chart(chart2, use_container_width=True)
     else:
@@ -235,13 +240,15 @@ with tab1:
 
     st.subheader("Dimension Scoring Averages")
     st.markdown("Where is data quality failing across the five dimensions?")
-    dim_means = results_df[["dim_completeness", "dim_temporal", "dim_identity", "dim_provenance", "dim_cross_record"]].mean().reset_index()
+    dim_means = results_df[[
+        "dim_completeness", "dim_temporal", "dim_identity", "dim_provenance", "dim_cross_record"
+    ]].mean().reset_index()
     dim_means.columns = ["Dimension", "Average Score"]
     dim_means["Dimension"] = ["Completeness", "Temporal", "Identity", "Provenance", "Cross-Record"]
     chart3 = alt.Chart(dim_means).mark_bar(color="#2E7D32").encode(
         x=alt.X("Average Score:Q", scale=alt.Scale(domain=[0, 1])),
         y=alt.Y("Dimension:N", sort="-x", title=""),
-        tooltip=["Dimension", "Average Score"]
+        tooltip=["Dimension", "Average Score"],
     ).properties(height=250)
     st.altair_chart(chart3, use_container_width=True)
 
@@ -250,62 +257,42 @@ with tab2:
     if not flagged.empty:
         st.subheader("🚩 Flagged Records for Manual Review")
         st.warning(f"{len(flagged)} record(s) require manual review.")
-        
+
         for _, row in flagged.iterrows():
             with st.expander(f"{row['canonical_id']} - {row['given_name']} {row['family_name']} ({row['decision']})"):
                 st.write(f"**Trust Score:** {row['trust_score']}")
                 st.write(f"**Primary Issue:** {row['primary_issue']}")
                 st.info(f"**Forensic Detail:** {row['explanation']}")
                 st.write("**Dimension Scores:**")
-                
-                # Pass the selected single color to the bar renderer
-                render_dimension_bar("Completeness", row['dim_completeness'], selected_color)
-                render_dimension_bar("Temporal", row['dim_temporal'], selected_color)
-                render_dimension_bar("Identity", row['dim_identity'], selected_color)
-                render_dimension_bar("Provenance", row['dim_provenance'], selected_color)
-                render_dimension_bar("Cross-Record", row['dim_cross_record'], selected_color)
+
+                render_dimension_bar("Completeness", row["dim_completeness"], selected_color)
+                render_dimension_bar("Temporal", row["dim_temporal"], selected_color)
+                render_dimension_bar("Identity", row["dim_identity"], selected_color)
+                render_dimension_bar("Provenance", row["dim_provenance"], selected_color)
+                render_dimension_bar("Cross-Record", row["dim_cross_record"], selected_color)
 
         st.write("")
-        csv_flagged = flagged.to_csv(index=False).encode('utf-8')
+        csv_flagged = flagged.to_csv(index=False).encode("utf-8")
         st.download_button(
             label="📥 Download Flagged Records (CSV)",
             data=csv_flagged,
-            file_name='flagged_identity_records.csv',
-            mime='text/csv',
+            file_name="flagged_identity_records.csv",
+            mime="text/csv",
         )
     else:
         st.success("All records processed cleanly. No flags raised.")
 
 with tab3:
     st.subheader("Batch Results")
-    st.markdown(results_df[["canonical_id", "given_name", "family_name", "trust_score", "decision", "primary_issue"]].to_markdown(index=False))
+    st.markdown(
+        results_df[[
+            "canonical_id", "given_name", "family_name", "trust_score", "decision", "primary_issue"
+        ]].to_markdown(index=False)
+    )
 
     st.download_button(
         label="📥 Download Full Scored Batch (CSV)",
-        data=results_df.to_csv(index=False).encode('utf-8'),
-        file_name='full_scored_batch.csv',
-        mime='text/csv',
+        data=results_df.to_csv(index=False).encode("utf-8"),
+        file_name="full_scored_batch.csv",
+        mime="text/csv",
     )
-
-    if PDF_AVAILABLE:
-        st.divider()
-        st.subheader("📄 Regulatory Audit Trail")
-        st.write("Generate a PDF report mapping flagged records to DOH Standard clauses.")
-        
-        if st.button("Generate PDF Audit Report"):
-            with st.spinner("Generating PDF..."):
-                temp_csv_path = "temp_scored_batch.csv"
-                results_df.to_csv(temp_csv_path, index=False)
-                pdf_path = "trust_report.pdf"
-                
-                try:
-                    generate_report(temp_csv_path, pdf_path, title="Identity Trust Batch Report")
-                    with open(pdf_path, "rb") as f:
-                        st.download_button(
-                            label="📥 Download PDF Report",
-                            data=f,
-                            file_name="Identity_Trust_Report.pdf",
-                            mime="application/pdf"
-                        )
-                except Exception as e:
-                    st.error(f"Could not generate PDF: {e}")
