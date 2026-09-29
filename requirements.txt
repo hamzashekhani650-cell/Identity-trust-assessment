@@ -5,3 +5,4 @@ scipy
 rapidfuzz
 scikit-learn
 tabulate
+reportlab
