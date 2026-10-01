@@ -175,7 +175,7 @@ def normalize_date(value):
     if isinstance(value, pd.Timestamp):
         return value.strftime("%Y-%m-%d")
     s = str(value).strip()
-    if s == "" or s.lower() in ("):
+    if s == "" or s.lower() in ("nan", "nat"):
 nan", "nat"):
         return ""
     if        len(s) == 10 and s[4] == "-":
