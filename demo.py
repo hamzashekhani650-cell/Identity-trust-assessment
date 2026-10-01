@@ -13,9 +13,15 @@ from trust_layer.drg_validators import assess_drg_readiness
 from trust_layer.mds_validators import check_mds_completeness
 from trust_layer.consent_validators import validate_consent
 
+try:
+    from trust_layer.prior_auth_validators import validate_preauth
+    PA_AVAILABLE = True
+except ImportError:
+    PA_AVAILABLE = False
+
 st.set_page_config(page_title='Identity Trust Assessment', layout='wide')
 st.title('Identity Trust Assessment')
-st.caption('Five-dimension trust layer for patient identity resolution in HIEs')
+st.caption('Pre-submission record trust gate for patient identity resolution and claim readiness in HIEs')
 
 with st.expander('About this demo'):
     st.markdown('''
@@ -29,7 +35,7 @@ This demo uses a revised scoring configuration, tuned separately from the publis
 
 The revised formula and thresholds were tuned for realistic flag rates on messy real-world hospital data. A hospital pilot should re-derive both using the paper's methodology before production deployment.
 
-All identity decisions trace to explicit rule-based validators. No AI-driven resolution, merging, or auto-correction is performed.
+All checks are rule-based and deterministic. No AI-driven resolution, merging, or auto-correction is performed.
     ''')
 
 AUDIT_LOG_PATH = '/tmp/audit_log.jsonl'
@@ -88,30 +94,6 @@ REGION_PROFILES = {
             'source_facility': ['Manipal Hospital', 'Apollo Hospital', 'Fortis Healthcare'],
             'registration_date': ['2024-01-10', '2024-02-15', '2024-03-20'],
             'canonical_id': ['IND001', 'IND002', 'IND003'],
-        },
-    },
-    'UK (NHS)': {
-        'id_label': 'NHS Number',
-        'id_pattern': r'^\d{10}$',
-        'id_example': '1234567890',
-        'regulatory_body': 'NHS Digital',
-        'trusted_facilities': [
-            "Guy's and St Thomas'", "King's College Hospital",
-            'Royal Free London', 'Manchester Royal Infirmary',
-            "St Mary's Hospital",
-        ],
-        'required_fields': ['emirates_id', 'given_name', 'family_name', 'date_of_birth'],
-        'dob_min_year': 1900,
-        'dob_max_year': 2025,
-        'sample_data': {
-            'emirates_id': ['1234567890', '', '1234567890'],
-            'given_name': ['Oliver', 'Amelia', 'James'],
-            'family_name': ['Smith', 'Jones', 'Taylor'],
-            'date_of_birth': ['1985-03-15', '1990-07-22', '1992-01-01'],
-            'nationality': ['UK', 'UK', 'UK'],
-            'source_facility': ["Guy's and St Thomas'", "King's College Hospital", 'Royal Free London'],
-            'registration_date': ['2024-01-10', '2024-02-15', '2024-03-20'],
-            'canonical_id': ['NHS001', 'NHS002', 'NHS003'],
         },
     },
 }
@@ -231,7 +213,7 @@ def run_assessment(file_bytes, region_name):
 
     synonyms = {
         'emirates_id': ['emirates_id', 'Emirates ID', 'ID', 'Identifier', 'emirates id',
-                        'EmiratesID', 'National ID', 'ABHA', 'Aadhaar', 'NHS Number'],
+                        'EmiratesID', 'National ID', 'ABHA', 'Aadhaar'],
         'given_name': ['given_name', 'First Name', 'FirstName', 'Given Name', 'given name', 'GivenName'],
         'family_name': ['family_name', 'Last Name', 'LastName', 'Surname', 'Family Name', 'family name', 'FamilyName'],
         'date_of_birth': ['date_of_birth', 'DOB', 'Date of Birth', 'BirthDate', 'Birth Date', 'date of birth', 'DOB '],
@@ -359,7 +341,7 @@ def run_assessment(file_bytes, region_name):
     log_batch(
         audit_entries,
         log_path=AUDIT_LOG_PATH,
-        config_version='v0.3.0-demo',
+        config_version='v0.4.0-demo',
         thresholds={'low': 0.75, 'medium': 0.45},
     )
 
@@ -413,7 +395,6 @@ def run_assessment(file_bytes, region_name):
             'issues': ' | '.join(r['issues']),
         })
     drg_df = pd.DataFrame(drg_rows)
-
     drg_applicable = drg_df[drg_df['applicable'] == True]
     drg_meta = {
         'available': len(drg_applicable) > 0,
@@ -426,11 +407,17 @@ def run_assessment(file_bytes, region_name):
     }
 
     gov_rows = []
+    pa_rows = []
     for _, row in df.iterrows():
         rec_dict = row.to_dict()
         mds = check_mds_completeness(rec_dict)
         consent = validate_consent(rec_dict)
         mds_missing = mds['patient_demographics_missing'] + mds['encounter_missing'] + mds['clinical_missing']
+
+        pa = {'pa_required': False, 'pa_present': False, 'pa_score': 1.0, 'issues': []}
+        if PA_AVAILABLE:
+            pa = validate_preauth(rec_dict)
+
         gov_rows.append({
             'canonical_id': row.get('canonical_id', '?'),
             'given_name': row.get('given_name', ''),
@@ -440,7 +427,12 @@ def run_assessment(file_bytes, region_name):
             'consent_score': consent['consent_score'],
             'consent_state': consent['consent_state'],
             'consent_issues': ' | '.join(consent['issues']),
+            'pa_score': pa['pa_score'],
+            'pa_required': pa['pa_required'],
+            'pa_present': pa['pa_present'],
+            'pa_issues': ' | '.join(pa['issues']),
         })
+
     gov_df = pd.DataFrame(gov_rows)
 
     gov_meta = {
@@ -453,6 +445,9 @@ def run_assessment(file_bytes, region_name):
         'consent_blocked': int(gov_df['consent_state'].isin(['denied', 'withdrawn']).sum()),
         'consent_missing': int((gov_df['consent_state'] == 'missing').sum()),
         'mean_consent': float(gov_df['consent_score'].mean()),
+        'pa_required': int(gov_df['pa_required'].sum()),
+        'pa_missing': int(((gov_df['pa_required'] == True) & (gov_df['pa_present'] == False)).sum()),
+        'pa_valid': int(((gov_df['pa_required'] == True) & (gov_df['pa_score'] >= 0.95)).sum()),
     }
 
     meta = {
@@ -775,7 +770,7 @@ with tab5:
 
 with tab6:
     st.subheader('Data Governance')
-    st.markdown('Minimum Data Set (MDS) completeness and consent compliance checks. Both are rule-based and deterministic.')
+    st.markdown('Minimum Data Set completeness, consent compliance, and prior-authorization checks. All rule-based and deterministic.')
 
     g1, g2, g3, g4 = st.columns(4)
     g1.metric('Mean MDS Score', f'{gov_meta["mean_mds"]:.3f}')
@@ -845,13 +840,27 @@ with tab6:
     if gov_meta['consent_blocked'] > 0:
         st.error(f'{gov_meta["consent_blocked"]} record(s) have denied or withdrawn consent — these must not be shared without further review.')
 
+    if PA_AVAILABLE:
+        st.divider()
+        st.subheader('Prior-Authorization Status')
+        st.markdown('Procedures that require pre-authorization under DHA/DOH rules. Missing or expired PA is a documented rejection cause.')
+
+        pa1, pa2, pa3 = st.columns(3)
+        pa1.metric('PA-Required Procedures', gov_meta['pa_required'])
+        pa2.metric('Missing PA Reference', gov_meta['pa_missing'])
+        pa3.metric('Valid PA on File', gov_meta['pa_valid'])
+
+        if gov_meta['pa_missing'] > 0:
+            st.error(f'{gov_meta["pa_missing"]} claim(s) will be rejected: procedure requires pre-authorization but no PA reference is on file.')
+
     st.divider()
     st.subheader('Records with Governance Issues')
 
     problematic_gov = gov_df[
         (gov_df['mds_score'] < 0.80) |
         (gov_df['consent_state'].isin(['denied', 'withdrawn', 'missing'])) |
-        (gov_df['consent_issues'] != '')
+        (gov_df['consent_issues'] != '') |
+        ((gov_df['pa_required'] == True) & (gov_df['pa_present'] == False))
     ].copy()
 
     if problematic_gov.empty:
@@ -859,7 +868,8 @@ with tab6:
     else:
         st.caption(f'{len(problematic_gov)} record(s) with at least one governance issue.')
         display_cols = ['canonical_id', 'given_name', 'family_name',
-                        'mds_score', 'mds_missing', 'consent_state', 'consent_issues']
+                        'mds_score', 'mds_missing', 'consent_state', 'consent_issues',
+                        'pa_score', 'pa_issues']
         display_cols = [c for c in display_cols if c in problematic_gov.columns]
         st.dataframe(problematic_gov[display_cols], use_container_width=True)
 
