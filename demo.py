@@ -10,6 +10,8 @@ from trust_layer.validators import CrossRecordValidator
 from trust_layer.audit import log_batch, verify_chain
 from trust_layer.coding_validators import assess_record, find_duplicate_episodes
 from trust_layer.drg_validators import assess_drg_readiness
+from trust_layer.mds_validators import check_mds_completeness
+from trust_layer.consent_validators import validate_consent
 
 st.set_page_config(page_title='Identity Trust Assessment', layout='wide')
 st.title('Identity Trust Assessment')
@@ -363,9 +365,6 @@ def run_assessment(file_bytes, region_name):
 
     results_df = pd.DataFrame(results)
 
-    # ========================================================
-    # CLINICAL COHERENCE
-    # ========================================================
     clinical_df = None
     clinical_meta = {'available': False}
     if 'diagnosis_code' in df.columns or 'procedure_code' in df.columns:
@@ -400,9 +399,6 @@ def run_assessment(file_bytes, region_name):
             'duplicate_episodes': find_duplicate_episodes(df.to_dict('records')),
         }
 
-    # ========================================================
-    # DRG READINESS
-    # ========================================================
     drg_rows = []
     for _, row in df.iterrows():
         r = assess_drg_readiness(row.to_dict())
@@ -429,12 +425,42 @@ def run_assessment(file_bytes, region_name):
         'mean_readiness': float(drg_applicable['drg_readiness_score'].mean()) if len(drg_applicable) else 1.0,
     }
 
+    gov_rows = []
+    for _, row in df.iterrows():
+        rec_dict = row.to_dict()
+        mds = check_mds_completeness(rec_dict)
+        consent = validate_consent(rec_dict)
+        mds_missing = mds['patient_demographics_missing'] + mds['encounter_missing'] + mds['clinical_missing']
+        gov_rows.append({
+            'canonical_id': row.get('canonical_id', '?'),
+            'given_name': row.get('given_name', ''),
+            'family_name': row.get('family_name', ''),
+            'mds_score': mds['mds_score'],
+            'mds_missing': ', '.join(mds_missing) if mds_missing else '',
+            'consent_score': consent['consent_score'],
+            'consent_state': consent['consent_state'],
+            'consent_issues': ' | '.join(consent['issues']),
+        })
+    gov_df = pd.DataFrame(gov_rows)
+
+    gov_meta = {
+        'available': True,
+        'mean_mds': float(gov_df['mds_score'].mean()),
+        'below_80': int((gov_df['mds_score'] < 0.80).sum()),
+        'below_60': int((gov_df['mds_score'] < 0.60).sum()),
+        'consent_granted': int((gov_df['consent_state'] == 'granted').sum()),
+        'consent_restricted': int((gov_df['consent_state'] == 'restricted').sum()),
+        'consent_blocked': int(gov_df['consent_state'].isin(['denied', 'withdrawn']).sum()),
+        'consent_missing': int((gov_df['consent_state'] == 'missing').sum()),
+        'mean_consent': float(gov_df['consent_score'].mean()),
+    }
+
     meta = {
         'total_raw': total_raw, 'missing_ids': missing_ids,
         'missing_dob': missing_dob, 'dup_ids': dup_ids,
         'total_normalized': total_normalized,
     }
-    return results_df, meta, df, clinical_df, clinical_meta, drg_df, drg_meta
+    return results_df, meta, df, clinical_df, clinical_meta, drg_df, drg_meta, gov_df, gov_meta
 
 with st.sidebar:
     st.subheader('Configuration')
@@ -471,12 +497,13 @@ if result[0] is None:
     st.info(f'Columns found: {", ".join(result[1]["found"])}')
     st.stop()
 
-results_df, meta, df_meta, clinical_df, clinical_meta, drg_df, drg_meta = result
+results_df, meta, df_meta, clinical_df, clinical_meta, drg_df, drg_meta, gov_df, gov_meta = result
 
-tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
+tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs([
     'Executive Dashboard', 'Flagged Records',
     'Batch Results', 'Coding Coherence',
-    'DRG Readiness', 'Audit Trail & Normalization',
+    'DRG Readiness', 'Data Governance',
+    'Audit Trail & Normalization',
 ])
 
 with tab1:
@@ -603,10 +630,10 @@ with tab3:
 
 with tab4:
     st.subheader('Coding & Episode Coherence')
-    st.markdown('Rule-based checks on diagnosis codes, procedure codes, and episode timelines. All checks are deterministic — no clinical judgment.')
+    st.markdown('Rule-based checks on diagnosis codes, procedure codes, and episode timelines.')
 
     if not clinical_meta.get('available'):
-        st.info('This file does not contain clinical columns. Upload a clinical dataset to run these checks.')
+        st.info('This file does not contain clinical columns.')
     else:
         cc1, cc2, cc3, cc4 = st.columns(4)
         cc1.metric('ICD Issues', clinical_meta['icd_issues'])
@@ -672,7 +699,7 @@ with tab4:
 
 with tab5:
     st.subheader('DRG Readiness')
-    st.markdown('Validates whether inpatient records have every input the IR-DRG grouper needs. Does not perform actual grouping — the 3M rule tables are proprietary.')
+    st.markdown('Validates whether inpatient records have every input the IR-DRG grouper needs.')
 
     if not drg_meta.get('available'):
         st.info('No inpatient records found in this file.')
@@ -747,6 +774,103 @@ with tab5:
             )
 
 with tab6:
+    st.subheader('Data Governance')
+    st.markdown('Minimum Data Set (MDS) completeness and consent compliance checks. Both are rule-based and deterministic.')
+
+    g1, g2, g3, g4 = st.columns(4)
+    g1.metric('Mean MDS Score', f'{gov_meta["mean_mds"]:.3f}')
+    g2.metric('Below 80% MDS', gov_meta['below_80'])
+    g3.metric('Consent Blocked', gov_meta['consent_blocked'])
+    g4.metric('Consent Missing', gov_meta['consent_missing'])
+
+    st.divider()
+    st.subheader('MDS Completeness Distribution')
+    mds_buckets = pd.DataFrame({
+        'Bucket': ['Perfect (1.0)', 'Good (0.8-0.99)', 'Partial (0.6-0.79)', 'Poor (<0.6)'],
+        'Count': [
+            int((gov_df['mds_score'] >= 0.999).sum()),
+            int(((gov_df['mds_score'] >= 0.80) & (gov_df['mds_score'] < 0.999)).sum()),
+            int(((gov_df['mds_score'] >= 0.60) & (gov_df['mds_score'] < 0.80)).sum()),
+            int((gov_df['mds_score'] < 0.60).sum()),
+        ],
+    })
+    st.altair_chart(
+        alt.Chart(mds_buckets).mark_bar(color='#5E35B1').encode(
+            x=alt.X('Count:Q', title='Records'),
+            y=alt.Y('Bucket:N', sort='-x', title=''),
+            tooltip=['Bucket', 'Count'],
+        ).properties(height=220),
+        use_container_width=True,
+    )
+
+    st.subheader('Most Common Missing MDS Fields')
+    mds_missing_counter = {}
+    for m in gov_df['mds_missing']:
+        if m:
+            for field in m.split(', '):
+                mds_missing_counter[field] = mds_missing_counter.get(field, 0) + 1
+    if mds_missing_counter:
+        mds_miss_df = pd.DataFrame([
+            {'Field': k, 'Records Missing': v}
+            for k, v in sorted(mds_missing_counter.items(), key=lambda x: -x[1])
+        ])
+        st.altair_chart(
+            alt.Chart(mds_miss_df).mark_bar(color='#E64A19').encode(
+                x=alt.X('Records Missing:Q'),
+                y=alt.Y('Field:N', sort='-x', title=''),
+                tooltip=['Field', 'Records Missing'],
+            ).properties(height=250),
+            use_container_width=True,
+        )
+
+    st.divider()
+    st.subheader('Consent Status Breakdown')
+    consent_counts = gov_df['consent_state'].value_counts().reset_index()
+    consent_counts.columns = ['Status', 'Count']
+    st.altair_chart(
+        alt.Chart(consent_counts).mark_bar(color='#00838F').encode(
+            x=alt.X('Count:Q', title='Records'),
+            y=alt.Y('Status:N', sort='-x', title=''),
+            tooltip=['Status', 'Count'],
+        ).properties(height=220),
+        use_container_width=True,
+    )
+
+    cns1, cns2, cns3, cns4 = st.columns(4)
+    cns1.metric('Granted', gov_meta['consent_granted'])
+    cns2.metric('Restricted', gov_meta['consent_restricted'])
+    cns3.metric('Denied / Withdrawn', gov_meta['consent_blocked'])
+    cns4.metric('Missing', gov_meta['consent_missing'])
+
+    if gov_meta['consent_blocked'] > 0:
+        st.error(f'{gov_meta["consent_blocked"]} record(s) have denied or withdrawn consent — these must not be shared without further review.')
+
+    st.divider()
+    st.subheader('Records with Governance Issues')
+
+    problematic_gov = gov_df[
+        (gov_df['mds_score'] < 0.80) |
+        (gov_df['consent_state'].isin(['denied', 'withdrawn', 'missing'])) |
+        (gov_df['consent_issues'] != '')
+    ].copy()
+
+    if problematic_gov.empty:
+        st.success('No governance issues detected.')
+    else:
+        st.caption(f'{len(problematic_gov)} record(s) with at least one governance issue.')
+        display_cols = ['canonical_id', 'given_name', 'family_name',
+                        'mds_score', 'mds_missing', 'consent_state', 'consent_issues']
+        display_cols = [c for c in display_cols if c in problematic_gov.columns]
+        st.dataframe(problematic_gov[display_cols], use_container_width=True)
+
+        st.download_button(
+            label='Download Governance Report (CSV)',
+            data=problematic_gov.to_csv(index=False).encode('utf-8'),
+            file_name='governance_report.csv',
+            mime='text/csv',
+        )
+
+with tab7:
     st.subheader('Tamper-Evident Audit Trail')
     st.markdown('Every decision in this batch is logged with a SHA-256 hash chain. Any modification breaks verification.')
 
