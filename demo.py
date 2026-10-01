@@ -9,6 +9,7 @@ from trust_layer.router import route_decision_hard
 from trust_layer.validators import CrossRecordValidator
 from trust_layer.audit import log_batch, verify_chain
 from trust_layer.coding_validators import assess_record, find_duplicate_episodes
+from trust_layer.drg_validators import assess_drg_readiness
 
 st.set_page_config(page_title='Identity Trust Assessment', layout='wide')
 st.title('Identity Trust Assessment')
@@ -24,7 +25,7 @@ This demo uses a revised scoring configuration, tuned separately from the publis
 - **Auto-link threshold:** 0.75 (paper: 0.952)
 - **Quarantine threshold:** 0.45 (paper: 0.571)
 
-The revised formula and thresholds were tuned for realistic flag rates on messy real-world hospital data and have not been independently validated the way the paper's configuration was. A hospital pilot should re-derive both using the methodology described in the published paper before any production deployment.
+The revised formula and thresholds were tuned for realistic flag rates on messy real-world hospital data. A hospital pilot should re-derive both using the paper's methodology before production deployment.
 
 All identity decisions trace to explicit rule-based validators. No AI-driven resolution, merging, or auto-correction is performed.
     ''')
@@ -363,7 +364,7 @@ def run_assessment(file_bytes, region_name):
     results_df = pd.DataFrame(results)
 
     # ========================================================
-    # CLINICAL COHERENCE (runs on the same normalized dataframe)
+    # CLINICAL COHERENCE
     # ========================================================
     clinical_df = None
     clinical_meta = {'available': False}
@@ -399,12 +400,41 @@ def run_assessment(file_bytes, region_name):
             'duplicate_episodes': find_duplicate_episodes(df.to_dict('records')),
         }
 
+    # ========================================================
+    # DRG READINESS
+    # ========================================================
+    drg_rows = []
+    for _, row in df.iterrows():
+        r = assess_drg_readiness(row.to_dict())
+        drg_rows.append({
+            'canonical_id': row.get('canonical_id', '?'),
+            'given_name': row.get('given_name', ''),
+            'family_name': row.get('family_name', ''),
+            'encounter_type': row.get('encounter_type', ''),
+            'drg_readiness_score': r['drg_readiness_score'],
+            'applicable': r['applicable'],
+            'missing_inputs': ', '.join(r['missing_inputs']),
+            'issues': ' | '.join(r['issues']),
+        })
+    drg_df = pd.DataFrame(drg_rows)
+
+    drg_applicable = drg_df[drg_df['applicable'] == True]
+    drg_meta = {
+        'available': len(drg_applicable) > 0,
+        'inpatient_count': len(drg_applicable),
+        'outpatient_count': int((drg_df['applicable'] == False).sum()),
+        'fully_ready': int((drg_applicable['drg_readiness_score'] >= 0.95).sum()) if len(drg_applicable) else 0,
+        'partial': int(((drg_applicable['drg_readiness_score'] >= 0.5) & (drg_applicable['drg_readiness_score'] < 0.95)).sum()) if len(drg_applicable) else 0,
+        'not_ready': int((drg_applicable['drg_readiness_score'] < 0.5).sum()) if len(drg_applicable) else 0,
+        'mean_readiness': float(drg_applicable['drg_readiness_score'].mean()) if len(drg_applicable) else 1.0,
+    }
+
     meta = {
         'total_raw': total_raw, 'missing_ids': missing_ids,
         'missing_dob': missing_dob, 'dup_ids': dup_ids,
         'total_normalized': total_normalized,
     }
-    return results_df, meta, df, clinical_df, clinical_meta
+    return results_df, meta, df, clinical_df, clinical_meta, drg_df, drg_meta
 
 with st.sidebar:
     st.subheader('Configuration')
@@ -441,11 +471,12 @@ if result[0] is None:
     st.info(f'Columns found: {", ".join(result[1]["found"])}')
     st.stop()
 
-results_df, meta, df_meta, clinical_df, clinical_meta = result
+results_df, meta, df_meta, clinical_df, clinical_meta, drg_df, drg_meta = result
 
-tab1, tab2, tab3, tab4, tab5 = st.tabs([
+tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
     'Executive Dashboard', 'Flagged Records',
-    'Batch Results', 'Coding Coherence', 'Audit Trail & Normalization',
+    'Batch Results', 'Coding Coherence',
+    'DRG Readiness', 'Audit Trail & Normalization',
 ])
 
 with tab1:
@@ -575,7 +606,7 @@ with tab4:
     st.markdown('Rule-based checks on diagnosis codes, procedure codes, and episode timelines. All checks are deterministic — no clinical judgment.')
 
     if not clinical_meta.get('available'):
-        st.info('This file does not contain clinical columns (diagnosis_code, procedure_code, admission_date, discharge_date, triage_level, total_cost_aed). Upload a clinical dataset to run these checks.')
+        st.info('This file does not contain clinical columns. Upload a clinical dataset to run these checks.')
     else:
         cc1, cc2, cc3, cc4 = st.columns(4)
         cc1.metric('ICD Issues', clinical_meta['icd_issues'])
@@ -621,19 +652,15 @@ with tab4:
             st.success('No coding or episode coherence issues detected.')
         else:
             st.caption(f'{len(problematic)} record(s) with at least one coding coherence issue.')
-
             display_cols = ['canonical_id', 'given_name', 'family_name', 'diagnosis_code',
                             'procedure_code', 'admission_date', 'discharge_date',
                             'triage_level', 'total_cost_aed', 'clinical_coherence_score']
             display_cols = [c for c in display_cols if c in problematic.columns]
-
             st.dataframe(problematic[display_cols], use_container_width=True)
-
             st.download_button(
                 label='Download Coding Coherence Report (CSV)',
                 data=problematic.to_csv(index=False).encode('utf-8'),
-                file_name='coding_coherence_report.csv',
-                mime='text/csv',
+                file_name='coding_coherence_report.csv', mime='text/csv',
             )
 
         if clinical_meta['duplicate_episodes']:
@@ -644,6 +671,82 @@ with tab4:
             st.dataframe(pd.DataFrame(dup_rows), use_container_width=True)
 
 with tab5:
+    st.subheader('DRG Readiness')
+    st.markdown('Validates whether inpatient records have every input the IR-DRG grouper needs. Does not perform actual grouping — the 3M rule tables are proprietary.')
+
+    if not drg_meta.get('available'):
+        st.info('No inpatient records found in this file.')
+    else:
+        d1, d2, d3, d4 = st.columns(4)
+        d1.metric('Inpatient Records', drg_meta['inpatient_count'])
+        d2.metric('Fully Ready', drg_meta['fully_ready'])
+        d3.metric('Partial', drg_meta['partial'])
+        d4.metric('Not Ready', drg_meta['not_ready'])
+
+        st.divider()
+        st.metric('Mean DRG Readiness', f'{drg_meta["mean_readiness"]:.3f}')
+
+        readiness_counts = pd.DataFrame({
+            'Status': ['Fully Ready', 'Partial', 'Not Ready'],
+            'Count': [drg_meta['fully_ready'], drg_meta['partial'], drg_meta['not_ready']],
+        })
+        st.altair_chart(
+            alt.Chart(readiness_counts).mark_bar(color='#00897B').encode(
+                x=alt.X('Count:Q', title='Records'),
+                y=alt.Y('Status:N', sort='-x', title=''),
+                tooltip=['Status', 'Count'],
+            ).properties(height=220),
+            use_container_width=True,
+        )
+
+        st.divider()
+        st.subheader('Most Common Missing Inputs')
+        missing_counter = {}
+        for m in drg_df['missing_inputs']:
+            if m:
+                for field in m.split(', '):
+                    missing_counter[field] = missing_counter.get(field, 0) + 1
+        if missing_counter:
+            miss_df = pd.DataFrame([
+                {'Field': k, 'Records Missing': v}
+                for k, v in sorted(missing_counter.items(), key=lambda x: -x[1])
+            ])
+            st.altair_chart(
+                alt.Chart(miss_df).mark_bar(color='#C62828').encode(
+                    x=alt.X('Records Missing:Q'),
+                    y=alt.Y('Field:N', sort='-x', title=''),
+                    tooltip=['Field', 'Records Missing'],
+                ).properties(height=250),
+                use_container_width=True,
+            )
+        else:
+            st.success('No missing inputs detected across inpatient records.')
+
+        st.divider()
+        st.subheader('Inpatient Records with DRG Issues')
+
+        problematic_drg = drg_df[
+            (drg_df['applicable'] == True) &
+            ((drg_df['drg_readiness_score'] < 1.0) | (drg_df['issues'] != ''))
+        ].copy()
+
+        if problematic_drg.empty:
+            st.success('All inpatient records are fully DRG-ready.')
+        else:
+            st.caption(f'{len(problematic_drg)} inpatient record(s) with at least one issue.')
+            display_cols = ['canonical_id', 'given_name', 'family_name', 'encounter_type',
+                            'drg_readiness_score', 'missing_inputs', 'issues']
+            display_cols = [c for c in display_cols if c in problematic_drg.columns]
+            st.dataframe(problematic_drg[display_cols], use_container_width=True)
+
+            st.download_button(
+                label='Download DRG Readiness Report (CSV)',
+                data=problematic_drg.to_csv(index=False).encode('utf-8'),
+                file_name='drg_readiness_report.csv',
+                mime='text/csv',
+            )
+
+with tab6:
     st.subheader('Tamper-Evident Audit Trail')
     st.markdown('Every decision in this batch is logged with a SHA-256 hash chain. Any modification breaks verification.')
 
