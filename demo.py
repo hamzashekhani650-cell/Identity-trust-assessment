@@ -1,4 +1,5 @@
 import io
+import os
 import re
 import streamlit as st
 import pandas as pd
@@ -6,10 +7,29 @@ import altair as alt
 from trust_layer.scoring import compute_trust_score
 from trust_layer.router import route_decision_hard
 from trust_layer.validators import CrossRecordValidator
+from trust_layer.audit import log_batch, verify_chain
 
 st.set_page_config(page_title="Identity Trust Assessment", layout="wide")
 st.title("Identity Trust Assessment")
 st.caption("Five-dimension trust layer for patient identity resolution in HIEs")
+
+with st.expander("ℹ️ About this demo"):
+    st.markdown("""
+    **Scoring configuration notice:**
+
+    This demo uses a revised scoring configuration, tuned separately from the published paper's validated configuration.
+
+    - **Composite formula:** weighted sum × (0.4 + 0.6 × weakest dimension score) — a continuous blend
+      *(paper's validated formula: weighted sum × max(weakest dimension score, 0.4) — a hard floor)*
+    - **Auto-link threshold:** 0.75 (paper: 0.952)
+    - **Quarantine threshold:** 0.45 (paper: 0.571)
+
+    The revised formula and thresholds were tuned for realistic flag rates on messy real-world hospital data and have not been independently validated the way the paper's configuration was. A hospital pilot should re-derive both using the methodology described in the published paper (floor-sensitivity sweep; Bayes-risk cost matrix) before any production deployment.
+
+    All identity decisions trace to explicit rule-based validators. No AI-driven resolution, merging, or auto-correction is performed.
+    """)
+
+AUDIT_LOG_PATH = "/tmp/audit_log.jsonl"
 
 COLOR_OPTIONS = {
     "Blue": "#1E90FF", "Pink": "#FF69B4", "Red": "#FF0000",
@@ -155,9 +175,10 @@ def normalize_date(value):
     if isinstance(value, pd.Timestamp):
         return value.strftime("%Y-%m-%d")
     s = str(value).strip()
-    if s == "" or s.lower() in ("nan", "nat"):
+    if s == "" or s.lower() in ("):
+nan", "nat"):
         return ""
-    if len(s) == 10 and s[4] == "-":
+    if        len(s) == 10 and s[4] == "-":
         return s
     try:
         parsed = pd.to_datetime(s, dayfirst=True, errors="coerce")
@@ -172,10 +193,10 @@ def normalize_date(value):
 # ============================================================
 def validate_completeness_region(rec, config):
     fields = {
-        "emirates_id": rec.emirates_id,
-        "given_name": rec.given_name,
-        "family_name": rec.family_name,
-        "date_of_birth": rec.date_of_birth,
+        "emirates_id": rec.emirates_id for,
+        "given k_name": rec.given,_name,
+        "family_name": rec.family_name v,
+        "date_of_birth": rec.date_of in_birth,
     }
     req = config["required_fields"]
     present = sum(1 for f in req if fields.get(f))
@@ -210,8 +231,7 @@ def validate_provenance_region(rec, config):
 # RECORD CLASS
 # ============================================================
 class Record:
-    def __init__(self, **kwargs):
-        for k, v in kwargs.items():
+    def __init__(self, **kwargs kwargs.items():
             setattr(self, k, v)
 
 # ============================================================
@@ -271,6 +291,7 @@ def run_assessment(file_bytes, region_name):
 
     cv = CrossRecordValidator()
     results = []
+    audit_entries = []
 
     for index, row in df.iterrows():
         rec = Record(
@@ -346,7 +367,16 @@ def run_assessment(file_bytes, region_name):
             "dim_identity": dims["identity"], "dim_provenance": dims["provenance"],
             "dim_cross_record": dims["cross_record"],
         })
+
+        audit_entries.append((rec, dims, score, decision))
         cv.add_record(rec)
+
+    log_batch(
+        audit_entries,
+        log_path=AUDIT_LOG_PATH,
+        config_version="v0.3.0-demo",
+        thresholds={"low": 0.75, "medium": 0.45},
+    )
 
     results_df = pd.DataFrame(results)
     meta = {
@@ -401,7 +431,7 @@ results_df, meta, df_meta = result
 # ============================================================
 tab1, tab2, tab3, tab4 = st.tabs([
     "📊 Executive Dashboard", "🚩 Flagged Records",
-    "📄 Batch Results", "🔧 Data Normalization Log",
+    "📄 Batch Results", "🔒 Audit Trail & Normalization",
 ])
 
 with tab1:
@@ -527,6 +557,31 @@ with tab3:
     )
 
 with tab4:
+    st.subheader("🔒 Tamper-Evident Audit Trail")
+    st.markdown("Every decision in this batch is logged with a SHA-256 hash chain. Any modification breaks verification.")
+
+    ac1, ac2 = st.columns(2)
+    with ac1:
+        if st.button("Verify audit chain"):
+            ok, msg = verify_chain(AUDIT_LOG_PATH)
+            if ok:
+                st.success(f"✅ Chain verified: {msg}")
+            else:
+                st.error(f"❌ Chain broken: {msg}")
+    with ac2:
+        if os.path.exists(AUDIT_LOG_PATH):
+            with open(AUDIT_LOG_PATH, "rb") as f:
+                st.download_button(
+                    label="📥 Download Audit Log (JSONL)",
+                    data=f.read(),
+                    file_name="audit_log.jsonl",
+                    mime="application/jsonl",
+                )
+        else:
+            st.caption("Log written after first batch is processed.")
+
+    st.divider()
+
     st.subheader("🔧 Data Normalization Log")
     st.markdown("Shows exactly what was cleaned before scoring. Formatting differences do **not** trigger flags.")
     st.metric("Records Normalized", meta["total_normalized"])
