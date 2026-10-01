@@ -34,19 +34,15 @@ REQUIRED_SEGMENTS_BY_TYPE = {
 
 
 def _split_segments(msg):
-    msg = msg.strip()
-    return [s for s in re.split(r'[\r\n]+', msg) if s.strip()]
+    return [s for s in re.split(r'[\r\n]+', msg.strip()) if s.strip()]
 
 
-def _get_message_type(msh_segment):
-    fields = msh_segment.split('|')
+def _get_message_type(msh):
+    fields = msh.split('|')
     if len(fields) < 9:
         return None
-    mt = fields[8]
-    parts = mt.split('^')
-    if len(parts) >= 2:
-        return f'{parts[0]}^{parts[1]}'
-    return mt if mt else None
+    parts = fields[8].split('^')
+    return f'{parts[0]}^{parts[1]}' if len(parts) >= 2 else fields[8]
 
 
 def _validate_msh(msh):
@@ -56,10 +52,8 @@ def _validate_msh(msh):
     if len(fields) < SEGMENT_MIN_FIELDS['MSH']:
         issues.append(f'MSH: only {len(fields)} fields (expected at least {SEGMENT_MIN_FIELDS["MSH"]})')
 
-    if len(fields) >= 2:
-        enc = fields[1]
-        if not enc or len(enc) < 4:
-            issues.append('MSH-2: encoding characters missing or malformed')
+    if len(fields) >= 2 and (not fields[1] or len(fields[1]) < 4):
+        issues.append('MSH-2: encoding characters missing or malformed')
 
     msg_type = _get_message_type(msh)
     if not msg_type:
@@ -71,12 +65,12 @@ def _validate_msh(msh):
     if len(fields) >= 11:
         proc = fields[10].strip().upper()
         if proc and proc not in VALID_PROCESSING_IDS:
-            issues.append(f'MSH-11: processing ID {proc!r} not in {sorted(VALID_PROCESSING_IDS)}')
+            issues.append(f'MSH-11: processing ID {proc!r} not recognised')
 
     if len(fields) >= 12:
         ver = fields[11].strip()
         if ver and ver not in VALID_VERSION_IDS:
-            issues.append(f'MSH-12: version ID {ver!r} not in recognised set')
+            issues.append(f'MSH-12: version ID {ver!r} not recognised')
 
     return issues, msg_type
 
@@ -89,7 +83,7 @@ def _validate_pid(pid):
         issues.append(f'PID: only {len(fields)} fields (expected at least {SEGMENT_MIN_FIELDS["PID"]})')
 
     if len(fields) < 4 or not fields[3].strip():
-        issues.append('PID-3: patient identifier list missing')
+        issues.append('PID-3: patient identifier missing')
     if len(fields) < 6 or not fields[5].strip():
         issues.append('PID-5: patient name missing')
     if len(fields) < 8 or not fields[7].strip():
@@ -101,14 +95,12 @@ def _validate_pid(pid):
 
 
 def validate_hl7_message(msg):
-    '''Returns dict with structure_score, issues, message_type, segments_present.'''
     segments = _split_segments(msg)
     if not segments:
         return {'structure_score': 0.0, 'issues': ['empty message'],
                 'message_type': None, 'segments_present': []}
 
     issues = []
-
     if not segments[0].startswith('MSH'):
         issues.append('first segment is not MSH')
 
@@ -136,24 +128,9 @@ def validate_hl7_message(msg):
                 issues.append(f'required segment {required} missing for {msg_type}')
 
     score = max(0.0, 1.0 - 0.1 * len(issues))
-
     return {
         'structure_score': round(score, 3),
         'issues': issues,
         'message_type': msg_type,
         'segments_present': sorted(seg_dict.keys()),
-    }
-
-
-def validate_hl7_batch(messages):
-    '''Aggregate over a list of raw HL7 messages. Returns summary stats
-    and per-message results.'''
-    results = [validate_hl7_message(m) for m in messages]
-    if not results:
-        return {'count': 0, 'mean_score': 0.0, 'results': []}
-    mean = sum(r['structure_score'] for r in results) / len(results)
-    return {
-        'count': len(results),
-        'mean_score': round(mean, 3),
-        'results': results,
     }
