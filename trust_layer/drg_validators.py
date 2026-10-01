@@ -1,32 +1,14 @@
-'''
-IR-DRG grouper readiness validation for UAE inpatient encounters.
-
-SCOPE: This module validates whether a record has every input the 3M
-IR-DRG grouper needs to succeed. It does NOT perform actual DRG grouping
-— the 3M rule tables are proprietary. This is a pre-submission check that
-catches missing or malformed inputs before the grouper runs.
-
-Aligned with DOH Abu Dhabi Claims & Adjudication Rules V2025.1 and
-Addendum 06 (inpatient payment requires a valid IR-DRG code).
-'''
 import re
 from datetime import datetime
 
 
 INPATIENT_ENCOUNTER_TYPES = {'3', '4', 'I', 'INPATIENT', 'IP', 'INPATIENT_STAY'}
 
-# Format for a valid IR-DRG code — e.g. G70A, F62B, I01Z.
-# The structure is: one letter (MDC), two digits (DRG number), one letter
-# (severity/complication split A/B/C/D/Z).
 IR_DRG_PATTERN = r'^[A-Z]\d{2}[A-Z]$'
 
-# DOH procedure categories that typically require laterality specification
 LATERALITY_REQUIRED_PROCEDURE_PREFIXES = {
-    '0SB', '0SC', '0SD',  # knee replacements
-    '0SR', '0SQ',          # hip replacements
-    '0PB', '0PC',          # shoulder
-    '0TC', '0TD',          # foot/ankle
-    '0LB', '0LC',          # eye/ear
+    '0SB', '0SC', '0SD', '0SR', '0SQ', '0PB', '0PC',
+    '0TC', '0TD', '0LB', '0LC',
 }
 
 VALID_SEVERITY_SPLITS = {'A', 'B', 'C', 'D', 'Z'}
@@ -55,14 +37,6 @@ def _is_valid_iso_date(v):
 
 
 def validate_drg_inputs(rec):
-    '''
-    Checks whether every required input for DRG grouping is present.
-    Only applies to inpatient encounters. Outpatient records return a
-    neutral score.
-
-    Returns dict with readiness_score (0-1), missing_inputs (list),
-    issues (list).
-    '''
     if not _is_inpatient(rec):
         return {
             'readiness_score': 1.0,
@@ -74,7 +48,6 @@ def validate_drg_inputs(rec):
     missing = []
     issues = []
 
-    # Required for every inpatient DRG assignment
     if not _is_present(rec.get('diagnosis_code')):
         missing.append('principal diagnosis (ICD-10 code)')
 
@@ -84,25 +57,17 @@ def validate_drg_inputs(rec):
     if not _is_valid_iso_date(rec.get('date_of_birth')):
         missing.append('date of birth (for age derivation)')
 
-    # At least one secondary diagnosis is required to justify severity
-    # splits (CC/MCC in 3M terminology). We accept a simple presence check
-    # on either an explicit count or a delimited list.
     secondary = rec.get('secondary_diagnoses') or rec.get('secondary_diagnosis_count')
     if not _is_present(secondary):
         missing.append('secondary diagnoses (required for severity assignment)')
 
-    # Discharge summary required for documentation of inpatient stay
     if not _is_present(rec.get('discharge_summary')):
         missing.append('discharge summary')
 
-    # Procedures are needed only for surgical DRGs — we cannot know from
-    # the code alone whether it's surgical. We flag the absence rather
-    # than fail the record.
     if not _is_present(rec.get('procedure_code')):
-        issues.append('DRG-1: no procedure code present — if surgical DRG applies, grouping will fail')
+        issues.append('DRG-1: no procedure code present — surgical DRG will fail')
 
-    # Compute score
-    total_expected = 5  # the five checks above that append to `missing`
+    total_expected = 5
     score = max(0.0, (total_expected - len(missing)) / total_expected)
 
     return {
@@ -114,10 +79,6 @@ def validate_drg_inputs(rec):
 
 
 def validate_drg_code_format(rec):
-    '''
-    If a DRG code is present on the record, validate its format.
-    Absence is not an error here — that's caught by validate_drg_inputs.
-    '''
     code = rec.get('drg_code')
     if not _is_present(code):
         return {'drg_code_valid': None, 'issues': []}
@@ -141,11 +102,6 @@ def validate_drg_code_format(rec):
 
 
 def validate_laterality(rec):
-    '''
-    Procedures known to require laterality specification. If the
-    procedure code starts with a laterality-sensitive prefix and no
-    laterality field is populated, flag it.
-    '''
     proc = rec.get('procedure_code')
     if not _is_present(proc):
         return {'laterality_ok': None, 'issues': []}
@@ -168,11 +124,8 @@ def validate_laterality(rec):
 
     return {'laterality_ok': True, 'issues': []}
 
+
 def assess_drg_readiness(rec):
-    '''
-    Aggregate all DRG-readiness checks for one record. Applies hard gates:
-    a malformed DRG code or 3+ missing required inputs forces Not Ready.
-    '''
     inputs = validate_drg_inputs(rec)
     code = validate_drg_code_format(rec)
     laterality = validate_laterality(rec)
@@ -187,10 +140,8 @@ def assess_drg_readiness(rec):
             'issues': [],
         }
 
-    # Hard gate 1: malformed DRG code -> Not Ready
     if code['drg_code_valid'] is False:
         composite = 0.3
-    # Hard gate 2: 3 or more required inputs missing -> Not Ready
     elif len(inputs['missing_inputs']) >= 3:
         composite = 0.4
     else:
@@ -208,18 +159,8 @@ def assess_drg_readiness(rec):
         'issues': all_issues,
     }
 
-        'drg_readiness_score': round(composite, 3),
-        'applicable': inputs['applicable'],
-        'missing_inputs': inputs['missing_inputs'],
-        'issues': all_issues,
-    }
-
 
 def drg_readiness_batch(records):
-    '''
-    Aggregate over a list of records. Returns counts of records that are
-    fully ready, partially ready, and not ready for grouping.
-    '''
     results = [assess_drg_readiness(r) for r in records]
     applicable = [r for r in results if r['applicable']]
 
