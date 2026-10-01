@@ -3,44 +3,35 @@ Minimum Data Set (MDS) validation for UAE HIEs.
 Checks that records carry the mandatory fields required by NABIDH
 and Malaffi before submission. Rule-based, deterministic.
 
-Mapping intent (citations to be filled in once institutional access
-to the DOH/Nabidh specification is confirmed):
-  - Patient demographics
-  - Encounter
-  - Clinical coding
+Hard gates: missing Emirates ID or DOB caps the score, missing both
+forces a Not Ready classification.
 '''
 import re
 from datetime import datetime
 
 
-# ============================================================
-# MDS SCHEMA
-# ============================================================
 MDS_REQUIRED_FIELDS = {
     'patient_demographics': {
-        'emirates_id':   {'label': 'Emirates ID / National Identifier', 'weight': 1.5},
-        'given_name':    {'label': 'Given Name',                        'weight': 1.0},
-        'family_name':   {'label': 'Family Name',                       'weight': 1.0},
-        'date_of_birth': {'label': 'Date of Birth',                     'weight': 1.5},
-        'gender':        {'label': 'Gender',                            'weight': 1.0},
-        'nationality':   {'label': 'Nationality',                       'weight': 0.7},
+        'emirates_id':   {'label': 'Emirates ID / National Identifier', 'weight': 1.5, 'critical': True},
+        'given_name':    {'label': 'Given Name',                        'weight': 1.0, 'critical': False},
+        'family_name':   {'label': 'Family Name',                       'weight': 1.0, 'critical': False},
+        'date_of_birth': {'label': 'Date of Birth',                     'weight': 1.5, 'critical': True},
+        'gender':        {'label': 'Gender',                            'weight': 1.0, 'critical': False},
+        'nationality':   {'label': 'Nationality',                       'weight': 0.7, 'critical': False},
     },
     'encounter': {
-        'episode_id':       {'label': 'Episode Identifier',             'weight': 1.0},
-        'admission_date':   {'label': 'Admission Date',                 'weight': 1.5},
-        'discharge_date':   {'label': 'Discharge Date',                 'weight': 1.0},
-        'source_facility':  {'label': 'Source Facility',                'weight': 1.0},
+        'episode_id':       {'label': 'Episode Identifier',             'weight': 1.0, 'critical': False},
+        'admission_date':   {'label': 'Admission Date',                 'weight': 1.5, 'critical': False},
+        'discharge_date':   {'label': 'Discharge Date',                 'weight': 1.0, 'critical': False},
+        'source_facility':  {'label': 'Source Facility',                'weight': 1.0, 'critical': False},
     },
     'clinical': {
-        'diagnosis_code':   {'label': 'Primary Diagnosis Code',         'weight': 2.0},
-        'procedure_code':   {'label': 'Primary Procedure Code',         'weight': 1.0},
+        'diagnosis_code':   {'label': 'Primary Diagnosis Code',         'weight': 2.0, 'critical': False},
+        'procedure_code':   {'label': 'Primary Procedure Code',         'weight': 1.0, 'critical': False},
     },
 }
 
 
-# ============================================================
-# VALUE-LEVEL CHECKS
-# ============================================================
 VALID_GENDERS = {'M', 'F', 'MALE', 'FEMALE', 'OTHER', 'UNKNOWN', 'O', 'U'}
 
 
@@ -62,7 +53,6 @@ def _is_valid_iso_date(value):
 
 
 def check_field_presence(rec, category):
-    '''Returns (present_count, total_count, missing_labels) for a category.'''
     schema = MDS_REQUIRED_FIELDS.get(category, {})
     missing_labels = []
     present = 0
@@ -77,7 +67,6 @@ def check_field_presence(rec, category):
 
 
 def check_gender_validity(gender_value):
-    '''Returns 1.0 if valid, 0.0 if missing, 0.3 if not in allowed set.'''
     if not _is_present(gender_value):
         return 0.0
     if str(gender_value).strip().upper() in VALID_GENDERS:
@@ -86,10 +75,18 @@ def check_gender_validity(gender_value):
 
 
 def check_mds_completeness(rec):
-    '''Returns a dict with per-category presence ratios and overall MDS score.'''
+    '''
+    Returns a dict with per-category presence ratios and overall MDS score.
+    Applies hard gates:
+      - Missing both Emirates ID AND DOB -> cap at 0.40 (Not Ready)
+      - Missing Emirates ID (alone) -> cap at 0.70
+      - Missing DOB (alone) -> cap at 0.70
+      - Missing any other two fields -> cap at 0.75
+    '''
     out = {}
     total_weight_present = 0.0
     total_weight = 0.0
+    all_missing = []
 
     for category, schema in MDS_REQUIRED_FIELDS.items():
         cat_present = 0
@@ -104,25 +101,38 @@ def check_mds_completeness(rec):
                 total_weight_present += w
             else:
                 cat_missing.append(meta['label'])
+                all_missing.append(field)
 
         out[f'{category}_present'] = cat_present
         out[f'{category}_total'] = cat_total
         out[f'{category}_missing'] = cat_missing
         out[f'{category}_score'] = round(cat_present / cat_total, 2) if cat_total else 1.0
 
-    # Weighted overall MDS score
-    out['mds_score'] = round(total_weight_present / total_weight, 3) if total_weight else 0.0
+    base_score = round(total_weight_present / total_weight, 3) if total_weight else 0.0
 
-    # Gender sanity check (separate from presence)
+    # Hard gates
+    missing_id = 'emirates_id' in all_missing
+    missing_dob = 'date_of_birth' in all_missing
+    missing_count = len(all_missing)
+
+    if missing_id and missing_dob:
+        gated_score = min(base_score, 0.40)
+    elif missing_id or missing_dob:
+        gated_score = min(base_score, 0.70)
+    elif missing_count >= 2:
+        gated_score = min(base_score, 0.75)
+    else:
+        gated_score = base_score
+
+    out['mds_score'] = gated_score
+    out['base_score'] = base_score
+    out['all_missing_fields'] = all_missing
     out['gender_validity'] = check_gender_validity(rec.get('gender'))
 
     return out
 
 
 def find_mds_gaps(records):
-    '''Returns a summary dict of the most common missing MDS fields across
-    a batch of records. Useful for showing hospitals where their data is
-    weakest.'''
     from collections import Counter
     missing_counter = Counter()
     for r in records:
