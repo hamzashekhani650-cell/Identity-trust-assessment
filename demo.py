@@ -171,20 +171,19 @@ def normalize_id(value):
 
 def normalize_date(value):
     if pd.isna(value) or value is None:
-        return ""
+        return ''
     if isinstance(value, pd.Timestamp):
-        return value.strftime("%Y-%m-%d")
+        return value.strftime('%Y-%m-%d')
     s = str(value).strip()
-    if s == "" or s.lower() in ("nan", "nat"):
-nan", "nat"):
-        return ""
-    if        len(s) == 10 and s[4] == "-":
+    if s == '' or s.lower() in ('nan', 'nat'):
+        return ''
+    if len(s) == 10 and s[4] == '-':
         return s
     try:
-        parsed = pd.to_datetime(s, dayfirst=True, errors="coerce")
+        parsed = pd.to_datetime(s, dayfirst=True, errors='coerce')
         if pd.isna(parsed):
             return s
-        return parsed.strftime("%Y-%m-%d")
+        return parsed.strftime('%Y-%m-%d')
     except Exception:
         return s
 
