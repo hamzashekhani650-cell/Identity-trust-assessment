@@ -8,6 +8,7 @@ from trust_layer.scoring import compute_trust_score
 from trust_layer.router import route_decision_hard
 from trust_layer.validators import CrossRecordValidator
 from trust_layer.audit import log_batch, verify_chain
+from trust_layer.coding_validators import assess_record, find_duplicate_episodes
 
 st.set_page_config(page_title='Identity Trust Assessment', layout='wide')
 st.title('Identity Trust Assessment')
@@ -20,11 +21,10 @@ with st.expander('About this demo'):
 This demo uses a revised scoring configuration, tuned separately from the published paper's validated configuration.
 
 - **Composite formula:** weighted sum x (0.4 + 0.6 x weakest dimension score) — a continuous blend
-  *(paper's validated formula: weighted sum x max(weakest dimension score, 0.4) — a hard floor)*
 - **Auto-link threshold:** 0.75 (paper: 0.952)
 - **Quarantine threshold:** 0.45 (paper: 0.571)
 
-The revised formula and thresholds were tuned for realistic flag rates on messy real-world hospital data and have not been independently validated the way the paper's configuration was. A hospital pilot should re-derive both using the methodology described in the published paper (floor-sensitivity sweep; Bayes-risk cost matrix) before any production deployment.
+The revised formula and thresholds were tuned for realistic flag rates on messy real-world hospital data and have not been independently validated the way the paper's configuration was. A hospital pilot should re-derive both using the methodology described in the published paper before any production deployment.
 
 All identity decisions trace to explicit rule-based validators. No AI-driven resolution, merging, or auto-correction is performed.
     ''')
@@ -361,12 +361,50 @@ def run_assessment(file_bytes, region_name):
     )
 
     results_df = pd.DataFrame(results)
+
+    # ========================================================
+    # CLINICAL COHERENCE (runs on the same normalized dataframe)
+    # ========================================================
+    clinical_df = None
+    clinical_meta = {'available': False}
+    if 'diagnosis_code' in df.columns or 'procedure_code' in df.columns:
+        clinical_rows = []
+        for _, row in df.iterrows():
+            checks = assess_record(row.to_dict())
+            clinical_rows.append({
+                'canonical_id': row.get('canonical_id', '?'),
+                'given_name': row.get('given_name', ''),
+                'family_name': row.get('family_name', ''),
+                'diagnosis_code': row.get('diagnosis_code', ''),
+                'procedure_code': row.get('procedure_code', ''),
+                'admission_date': row.get('admission_date', ''),
+                'discharge_date': row.get('discharge_date', ''),
+                'triage_level': row.get('triage_level', ''),
+                'total_cost_aed': row.get('total_cost_aed', ''),
+                'icd_exists': checks['icd_exists'],
+                'icd_cpt_match': checks['icd_cpt_match'],
+                'episode_timeline': checks['episode_timeline'],
+                'admission_after_dob': checks['admission_after_dob'],
+                'triage_cost': checks['triage_cost'],
+                'clinical_coherence_score': checks['clinical_coherence_score'],
+            })
+        clinical_df = pd.DataFrame(clinical_rows)
+        clinical_meta = {
+            'available': True,
+            'icd_issues': int((clinical_df['icd_exists'] < 1.0).sum()),
+            'icd_cpt_mismatches': int((clinical_df['icd_cpt_match'] == 0.0).sum()),
+            'timeline_errors': int((clinical_df['episode_timeline'] == 0.0).sum()),
+            'triage_anomalies': int((clinical_df['triage_cost'] == 0.0).sum()),
+            'mean_coherence': float(clinical_df['clinical_coherence_score'].mean()),
+            'duplicate_episodes': find_duplicate_episodes(df.to_dict('records')),
+        }
+
     meta = {
         'total_raw': total_raw, 'missing_ids': missing_ids,
         'missing_dob': missing_dob, 'dup_ids': dup_ids,
         'total_normalized': total_normalized,
     }
-    return results_df, meta, df
+    return results_df, meta, df, clinical_df, clinical_meta
 
 with st.sidebar:
     st.subheader('Configuration')
@@ -403,11 +441,11 @@ if result[0] is None:
     st.info(f'Columns found: {", ".join(result[1]["found"])}')
     st.stop()
 
-results_df, meta, df_meta = result
+results_df, meta, df_meta, clinical_df, clinical_meta = result
 
-tab1, tab2, tab3, tab4 = st.tabs([
+tab1, tab2, tab3, tab4, tab5 = st.tabs([
     'Executive Dashboard', 'Flagged Records',
-    'Batch Results', 'Audit Trail & Normalization',
+    'Batch Results', 'Coding Coherence', 'Audit Trail & Normalization',
 ])
 
 with tab1:
@@ -533,6 +571,79 @@ with tab3:
     )
 
 with tab4:
+    st.subheader('Coding & Episode Coherence')
+    st.markdown('Rule-based checks on diagnosis codes, procedure codes, and episode timelines. All checks are deterministic — no clinical judgment.')
+
+    if not clinical_meta.get('available'):
+        st.info('This file does not contain clinical columns (diagnosis_code, procedure_code, admission_date, discharge_date, triage_level, total_cost_aed). Upload a clinical dataset to run these checks.')
+    else:
+        cc1, cc2, cc3, cc4 = st.columns(4)
+        cc1.metric('ICD Issues', clinical_meta['icd_issues'])
+        cc2.metric('ICD-CPT Mismatches', clinical_meta['icd_cpt_mismatches'])
+        cc3.metric('Timeline Errors', clinical_meta['timeline_errors'])
+        cc4.metric('Triage-Cost Anomalies', clinical_meta['triage_anomalies'])
+
+        st.divider()
+
+        issue_counts = pd.DataFrame({
+            'Issue': ['ICD Issues', 'ICD-CPT Mismatches', 'Timeline Errors', 'Triage-Cost Anomalies', 'Duplicate Episodes'],
+            'Count': [
+                clinical_meta['icd_issues'],
+                clinical_meta['icd_cpt_mismatches'],
+                clinical_meta['timeline_errors'],
+                clinical_meta['triage_anomalies'],
+                len(clinical_meta['duplicate_episodes']),
+            ],
+        })
+        st.altair_chart(
+            alt.Chart(issue_counts).mark_bar(color='#7E57C2').encode(
+                x=alt.X('Count:Q', title='Number of Records'),
+                y=alt.Y('Issue:N', sort='-x', title=''),
+                tooltip=['Issue', 'Count'],
+            ).properties(height=280),
+            use_container_width=True,
+        )
+
+        st.metric('Mean Clinical Coherence Score', f'{clinical_meta["mean_coherence"]:.3f}')
+
+        st.divider()
+        st.subheader('Records with Coding Issues')
+
+        problematic = clinical_df[
+            (clinical_df['icd_exists'] < 1.0) |
+            (clinical_df['icd_cpt_match'] == 0.0) |
+            (clinical_df['episode_timeline'] == 0.0) |
+            (clinical_df['triage_cost'] == 0.0) |
+            (clinical_df['admission_after_dob'] == 0.0)
+        ].copy()
+
+        if problematic.empty:
+            st.success('No coding or episode coherence issues detected.')
+        else:
+            st.caption(f'{len(problematic)} record(s) with at least one coding coherence issue.')
+
+            display_cols = ['canonical_id', 'given_name', 'family_name', 'diagnosis_code',
+                            'procedure_code', 'admission_date', 'discharge_date',
+                            'triage_level', 'total_cost_aed', 'clinical_coherence_score']
+            display_cols = [c for c in display_cols if c in problematic.columns]
+
+            st.dataframe(problematic[display_cols], use_container_width=True)
+
+            st.download_button(
+                label='Download Coding Coherence Report (CSV)',
+                data=problematic.to_csv(index=False).encode('utf-8'),
+                file_name='coding_coherence_report.csv',
+                mime='text/csv',
+            )
+
+        if clinical_meta['duplicate_episodes']:
+            st.divider()
+            st.subheader('Duplicate Episodes')
+            st.markdown('Episode IDs claimed by more than one canonical patient.')
+            dup_rows = [{'episode_id': ep, 'claimed_by': ', '.join(ids)} for ep, ids in clinical_meta['duplicate_episodes'].items()]
+            st.dataframe(pd.DataFrame(dup_rows), use_container_width=True)
+
+with tab5:
     st.subheader('Tamper-Evident Audit Trail')
     st.markdown('Every decision in this batch is logged with a SHA-256 hash chain. Any modification breaks verification.')
 
