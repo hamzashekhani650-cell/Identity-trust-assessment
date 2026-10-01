@@ -168,11 +168,10 @@ def validate_laterality(rec):
 
     return {'laterality_ok': True, 'issues': []}
 
-
 def assess_drg_readiness(rec):
     '''
-    Aggregate all DRG-readiness checks for one record. Returns a dict
-    with the composite readiness score and all accumulated issues.
+    Aggregate all DRG-readiness checks for one record. Applies hard gates:
+    a malformed DRG code or 3+ missing required inputs forces Not Ready.
     '''
     inputs = validate_drg_inputs(rec)
     code = validate_drg_code_format(rec)
@@ -180,10 +179,20 @@ def assess_drg_readiness(rec):
 
     all_issues = inputs['issues'] + code['issues'] + laterality['issues']
 
-    # Composite score: weighted average of the three sub-checks.
-    # If not applicable (outpatient), skip the check entirely.
     if not inputs['applicable']:
-        composite = 1.0
+        return {
+            'drg_readiness_score': 1.0,
+            'applicable': False,
+            'missing_inputs': [],
+            'issues': [],
+        }
+
+    # Hard gate 1: malformed DRG code -> Not Ready
+    if code['drg_code_valid'] is False:
+        composite = 0.3
+    # Hard gate 2: 3 or more required inputs missing -> Not Ready
+    elif len(inputs['missing_inputs']) >= 3:
+        composite = 0.4
     else:
         subscores = [inputs['readiness_score']]
         if code['drg_code_valid'] is not None:
@@ -193,6 +202,12 @@ def assess_drg_readiness(rec):
         composite = sum(subscores) / len(subscores)
 
     return {
+        'drg_readiness_score': round(composite, 3),
+        'applicable': inputs['applicable'],
+        'missing_inputs': inputs['missing_inputs'],
+        'issues': all_issues,
+    }
+
         'drg_readiness_score': round(composite, 3),
         'applicable': inputs['applicable'],
         'missing_inputs': inputs['missing_inputs'],
