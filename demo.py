@@ -12,6 +12,8 @@ from trust_layer.coding_validators import assess_record, find_duplicate_episodes
 from trust_layer.drg_validators import assess_drg_readiness
 from trust_layer.mds_validators import check_mds_completeness
 from trust_layer.consent_validators import validate_consent
+from trust_layer.schema_mapper import map_columns, CANONICAL_FIELDS
+from trust_layer.sample_generator import generate_sample
 
 try:
     from trust_layer.prior_auth_validators import validate_preauth
@@ -36,6 +38,8 @@ This demo uses a revised scoring configuration, tuned separately from the publis
 The revised formula and thresholds were tuned for realistic flag rates on messy real-world hospital data. A hospital pilot should re-derive both using the paper's methodology before production deployment.
 
 All checks are rule-based and deterministic. No AI-driven resolution, merging, or auto-correction is performed.
+
+This tool accepts any CSV. It maps incoming column names to a canonical schema, normalizes formatting differences, and processes whatever identity, clinical, and governance fields are present. Missing fields are treated as blank, and any check that cannot run is marked "not available" without stopping the rest of the pipeline.
     ''')
 
 AUDIT_LOG_PATH = '/tmp/audit_log.jsonl'
@@ -62,16 +66,6 @@ REGION_PROFILES = {
         'required_fields': ['emirates_id', 'given_name', 'family_name', 'date_of_birth'],
         'dob_min_year': 1900,
         'dob_max_year': 2025,
-        'sample_data': {
-            'emirates_id': ['784-1985-1234567-1', '', '784-1985-1234567-1'],
-            'given_name': ['Ahmed', 'Raj', 'Fatima'],
-            'family_name': ['Al-Mansoori', 'Kumar', 'Al-Zahra'],
-            'date_of_birth': ['1985-03-15', '1990-07-22', '1992-01-01'],
-            'nationality': ['UAE', 'India', 'UAE'],
-            'source_facility': ['Cleveland Clinic Abu Dhabi', 'Al Noor Hospital', 'SSMC'],
-            'registration_date': ['2024-01-10', '2024-02-15', '2024-03-20'],
-            'canonical_id': ['P001', 'P002', 'P003'],
-        },
     },
     'India (ABDM)': {
         'id_label': 'ABHA / Aadhaar',
@@ -85,16 +79,6 @@ REGION_PROFILES = {
         'required_fields': ['emirates_id', 'given_name', 'family_name', 'date_of_birth'],
         'dob_min_year': 1900,
         'dob_max_year': 2025,
-        'sample_data': {
-            'emirates_id': ['123456789012', '', '123456789012'],
-            'given_name': ['Raj', 'Priya', 'Amit'],
-            'family_name': ['Kumar', 'Sharma', 'Patel'],
-            'date_of_birth': ['1985-03-15', '1990-07-22', '1992-01-01'],
-            'nationality': ['India', 'India', 'India'],
-            'source_facility': ['Manipal Hospital', 'Apollo Hospital', 'Fortis Healthcare'],
-            'registration_date': ['2024-01-10', '2024-02-15', '2024-03-20'],
-            'canonical_id': ['IND001', 'IND002', 'IND003'],
-        },
     },
 }
 
@@ -129,6 +113,8 @@ def normalize_text(value):
     if pd.isna(value) or value is None:
         return ''
     s = str(value).strip()
+    if s.lower() in ('nan', 'nat', 'none'):
+        return ''
     lower = s.lower()
     for prefix in PREFIXES:
         if lower.startswith(prefix):
@@ -140,9 +126,12 @@ def normalize_text(value):
     return smart_title(s)
 
 def normalize_id(value):
-    if pd.isna(value) or value is None or str(value).strip() == '':
+    if pd.isna(value) or value is None:
         return None
-    digits = ''.join(c for c in str(value) if c.isdigit())
+    s = str(value).strip()
+    if s == '' or s.lower() in ('nan', 'nat', 'none'):
+        return None
+    digits = ''.join(c for c in s if c.isdigit())
     return digits if digits else None
 
 def normalize_date(value):
@@ -151,7 +140,7 @@ def normalize_date(value):
     if isinstance(value, pd.Timestamp):
         return value.strftime('%Y-%m-%d')
     s = str(value).strip()
-    if s == '' or s.lower() in ('nan', 'nat'):
+    if s == '' or s.lower() in ('nan', 'nat', 'none'):
         return ''
     if len(s) == 10 and s[4] == '-':
         return s
@@ -211,49 +200,43 @@ def run_assessment(file_bytes, region_name):
     df = pd.read_csv(io.BytesIO(file_bytes))
     df.columns = [str(c).strip() for c in df.columns]
 
-    synonyms = {
-        'emirates_id': ['emirates_id', 'Emirates ID', 'ID', 'Identifier', 'emirates id',
-                        'EmiratesID', 'National ID', 'ABHA', 'Aadhaar'],
-        'given_name': ['given_name', 'First Name', 'FirstName', 'Given Name', 'given name', 'GivenName'],
-        'family_name': ['family_name', 'Last Name', 'LastName', 'Surname', 'Family Name', 'family name', 'FamilyName'],
-        'date_of_birth': ['date_of_birth', 'DOB', 'Date of Birth', 'BirthDate', 'Birth Date', 'date of birth', 'DOB '],
-        'nationality': ['nationality', 'Nationality', 'Country'],
-        'source_facility': ['source_facility', 'Facility', 'Hospital', 'Source Facility', 'source facility'],
-        'registration_date': ['registration_date', 'Registration Date', 'Reg Date', 'registration date'],
-        'canonical_id': ['canonical_id', 'Canonical ID', 'Patient ID', 'MRN', 'canonical id', 'PatientID'],
-    }
-    for target, options in synonyms.items():
-        for opt in options:
-            if opt in df.columns:
-                df = df.rename(columns={opt: target})
-                break
+    if len(df.columns) == 0:
+        return None, {'error': True, 'found': [], 'missing': ['any columns']}
 
-    required_cols = ['given_name', 'family_name', 'date_of_birth']
-    missing = [c for c in required_cols if c not in df.columns]
-    if missing:
-        return None, {'error': True, 'found': list(df.columns), 'missing': missing}
+    original_columns = set(df.columns)
 
-    df['_orig_given'] = df['given_name'].astype(str)
-    df['_orig_family'] = df['family_name'].astype(str)
-    df['_orig_dob'] = df['date_of_birth'].astype(str)
-    df['_orig_id'] = df['emirates_id'].astype(str) if 'emirates_id' in df.columns else ''
+    mapping, unresolved, inferred = map_columns(df)
+    df = df.rename(columns=mapping)
+
+    for field in CANONICAL_FIELDS:
+        if field not in df.columns:
+            df[field] = ''
+
+    coding_available = ('diagnosis_code' in original_columns) or ('procedure_code' in original_columns)
+    drg_available = 'encounter_type' in original_columns
+    consent_available = 'consent_status' in original_columns
+    pa_available_here = 'preauth_reference' in original_columns or 'preauth_valid_until' in original_columns
+
+    df['_orig_given'] = df['given_name'].astype(str).replace('nan', '')
+    df['_orig_family'] = df['family_name'].astype(str).replace('nan', '')
+    df['_orig_dob'] = df['date_of_birth'].astype(str).replace('nan', '')
+    df['_orig_id'] = df['emirates_id'].astype(str).replace('nan', '')
 
     df['given_name'] = df['given_name'].apply(normalize_text)
     df['family_name'] = df['family_name'].apply(normalize_text)
     df['date_of_birth'] = df['date_of_birth'].apply(normalize_date)
     df['source_facility'] = df['source_facility'].apply(normalize_text)
     df['nationality'] = df['nationality'].apply(normalize_text)
-    if 'emirates_id' in df.columns:
-        df['emirates_id'] = df['emirates_id'].apply(normalize_id)
+    df['emirates_id'] = df['emirates_id'].apply(normalize_id)
 
     df['_changed_name'] = (df['_orig_given'] != df['given_name'].astype(str)) | (df['_orig_family'] != df['family_name'].astype(str))
-    df['_changed_dob'] = df['_orig_dob'] != df['date_of_birth'].astype(str)
-    df['_changed_id'] = (df['_orig_id'] != df['emirates_id'].astype(str)) & (df['_orig_id'].str.strip() != '')
+    df['_changed_dob'] = (df['_orig_dob'] != df['date_of_birth'].astype(str)) & (df['_orig_dob'] != '')
+    df['_changed_id'] = (df['_orig_id'] != df['emirates_id'].astype(str)) & (df['_orig_id'] != '')
 
     total_raw = len(df)
-    missing_ids = int(df['emirates_id'].isna().sum()) if 'emirates_id' in df.columns else total_raw
+    missing_ids = int(df['emirates_id'].isna().sum())
     missing_dob = int((df['date_of_birth'] == '').sum())
-    dup_ids = int(df['emirates_id'].duplicated().sum()) if 'emirates_id' in df.columns else 0
+    dup_ids = int(df['emirates_id'].dropna().duplicated().sum())
     total_normalized = int((df['_changed_name'] | df['_changed_dob'] | df['_changed_id']).sum())
 
     cv = CrossRecordValidator()
@@ -280,50 +263,59 @@ def run_assessment(file_bytes, region_name):
             'cross_record': cv.validate(rec),
         }
         score = compute_trust_score(**dims)
-        decision = route_decision_hard(score, dims['cross_record'])
 
         id_label = config['id_label']
         reg = config['regulatory_body']
-        explanation = 'Record is clean and trusted.'
-        primary_issue = 'None'
 
-        if decision in ('LINK_WITH_FLAG', 'QUARANTINE'):
-            weakest = min(dims, key=dims.get)
-            wv = dims[weakest]
+        critical_present = sum(1 for v in [rec.emirates_id, rec.given_name, rec.family_name, rec.date_of_birth] if v)
 
-            if weakest == 'cross_record':
-                if wv == 0.0:
-                    owner = None
-                    owners = cv.identifier_index.get(rec.emirates_id, set()) if rec.emirates_id else set()
-                    for o in owners:
-                        if o != rec.canonical_id:
-                            owner = o
-                            break
-                    explanation = (f'FORENSIC COLLISION: {id_label} {rec.emirates_id} is already registered '
-                                   f'to patient {owner or "another record"}. This record claims to be '
-                                   f'{rec.given_name} {rec.family_name} (DOB: {rec.date_of_birth}), which is a different identity.')
-                    primary_issue = 'Identifier Collision'
-                elif wv == 0.5:
-                    explanation = (f'POTENTIAL COLLISION: Name ({rec.given_name} {rec.family_name}) and '
-                                   f'DOB ({rec.date_of_birth}) match an existing patient, but the {id_label} differs.')
-                    primary_issue = 'Potential Name/DOB Collision'
-            elif weakest == 'completeness':
-                missing_fields = [f for f, v in [
-                    (id_label, rec.emirates_id), ('Given Name', rec.given_name),
-                    ('Family Name', rec.family_name), ('DOB', rec.date_of_birth),
-                ] if not v]
-                explanation = f'INCOMPLETE DATA: Missing required fields: {", ".join(missing_fields)}.'
-                primary_issue = 'Missing Demographics'
-            elif weakest == 'provenance':
-                explanation = f'LOW-TRUST SOURCE: Facility {rec.source_facility} is not in the {reg} trusted tier.'
-                primary_issue = 'Untrusted Facility'
-            elif weakest == 'temporal':
-                explanation = f'TEMPORAL ERROR: The DOB {rec.date_of_birth} could not be normalized to a valid ISO date.'
-                primary_issue = 'Temporal Validity Error'
-            elif weakest == 'identity':
-                explanation = (f'IDENTITY INCONSISTENCY: The {id_label} {rec.emirates_id} does not match the {reg} format '
-                               f'(expected e.g. {config["id_example"]}).')
-                primary_issue = 'Malformed Identifier'
+        if critical_present == 0:
+            decision = 'INSUFFICIENT_DATA'
+            score = 0.0
+            explanation = 'Record contains no name, identifier, or date of birth. Identity trust cannot be assessed on this record.'
+            primary_issue = 'Insufficient Data'
+        else:
+            decision = route_decision_hard(score, dims['cross_record'])
+            explanation = 'Record is clean and trusted.'
+            primary_issue = 'None'
+
+            if decision in ('LINK_WITH_FLAG', 'QUARANTINE'):
+                weakest = min(dims, key=dims.get)
+                wv = dims[weakest]
+
+                if weakest == 'cross_record':
+                    if wv == 0.0:
+                        owner = None
+                        owners = cv.identifier_index.get(rec.emirates_id, set()) if rec.emirates_id else set()
+                        for o in owners:
+                            if o != rec.canonical_id:
+                                owner = o
+                                break
+                        explanation = (f'FORENSIC COLLISION: {id_label} {rec.emirates_id} is already registered '
+                                       f'to patient {owner or "another record"}. This record claims to be '
+                                       f'{rec.given_name} {rec.family_name} (DOB: {rec.date_of_birth}), which is a different identity.')
+                        primary_issue = 'Identifier Collision'
+                    elif wv == 0.5:
+                        explanation = (f'POTENTIAL COLLISION: Name ({rec.given_name} {rec.family_name}) and '
+                                       f'DOB ({rec.date_of_birth}) match an existing patient, but the {id_label} differs.')
+                        primary_issue = 'Potential Name/DOB Collision'
+                elif weakest == 'completeness':
+                    missing_fields = [f for f, v in [
+                        (id_label, rec.emirates_id), ('Given Name', rec.given_name),
+                        ('Family Name', rec.family_name), ('DOB', rec.date_of_birth),
+                    ] if not v]
+                    explanation = f'INCOMPLETE DATA: Missing required fields: {", ".join(missing_fields)}.'
+                    primary_issue = 'Missing Demographics'
+                elif weakest == 'provenance':
+                    explanation = f'LOW-TRUST SOURCE: Facility {rec.source_facility or "(unset)"} is not in the {reg} trusted tier.'
+                    primary_issue = 'Untrusted Facility'
+                elif weakest == 'temporal':
+                    explanation = f'TEMPORAL ERROR: The DOB {rec.date_of_birth or "(unset)"} could not be normalized to a valid ISO date.'
+                    primary_issue = 'Temporal Validity Error'
+                elif weakest == 'identity':
+                    explanation = (f'IDENTITY INCONSISTENCY: The {id_label} {rec.emirates_id or "(unset)"} does not match the {reg} format '
+                                   f'(expected e.g. {config["id_example"]}).')
+                    primary_issue = 'Malformed Identifier'
 
         results.append({
             'canonical_id': rec.canonical_id, 'given_name': rec.given_name,
@@ -341,7 +333,7 @@ def run_assessment(file_bytes, region_name):
     log_batch(
         audit_entries,
         log_path=AUDIT_LOG_PATH,
-        config_version='v0.4.0-demo',
+        config_version='v0.5.0-demo',
         thresholds={'low': 0.75, 'medium': 0.45},
     )
 
@@ -349,7 +341,7 @@ def run_assessment(file_bytes, region_name):
 
     clinical_df = None
     clinical_meta = {'available': False}
-    if 'diagnosis_code' in df.columns or 'procedure_code' in df.columns:
+    if coding_available:
         clinical_rows = []
         for _, row in df.iterrows():
             checks = assess_record(row.to_dict())
@@ -397,7 +389,7 @@ def run_assessment(file_bytes, region_name):
     drg_df = pd.DataFrame(drg_rows)
     drg_applicable = drg_df[drg_df['applicable'] == True]
     drg_meta = {
-        'available': len(drg_applicable) > 0,
+        'available': drg_available and len(drg_applicable) > 0,
         'inpatient_count': len(drg_applicable),
         'outpatient_count': int((drg_df['applicable'] == False).sum()),
         'fully_ready': int((drg_applicable['drg_readiness_score'] >= 0.95).sum()) if len(drg_applicable) else 0,
@@ -407,17 +399,16 @@ def run_assessment(file_bytes, region_name):
     }
 
     gov_rows = []
-    pa_rows = []
     for _, row in df.iterrows():
         rec_dict = row.to_dict()
         mds = check_mds_completeness(rec_dict)
-        consent = validate_consent(rec_dict)
-        mds_missing = mds['patient_demographics_missing'] + mds['encounter_missing'] + mds['clinical_missing']
-
+        consent = {'consent_score': 1.0, 'consent_state': 'granted', 'issues': []}
+        if consent_available:
+            consent = validate_consent(rec_dict)
         pa = {'pa_required': False, 'pa_present': False, 'pa_score': 1.0, 'issues': []}
-        if PA_AVAILABLE:
+        if PA_AVAILABLE and pa_available_here:
             pa = validate_preauth(rec_dict)
-
+        mds_missing = mds['patient_demographics_missing'] + mds['encounter_missing'] + mds['clinical_missing']
         gov_rows.append({
             'canonical_id': row.get('canonical_id', '?'),
             'given_name': row.get('given_name', ''),
@@ -425,18 +416,18 @@ def run_assessment(file_bytes, region_name):
             'mds_score': mds['mds_score'],
             'mds_missing': ', '.join(mds_missing) if mds_missing else '',
             'consent_score': consent['consent_score'],
-            'consent_state': consent['consent_state'],
+            'consent_state': consent['consent_state'] if consent_available else 'N/A',
             'consent_issues': ' | '.join(consent['issues']),
             'pa_score': pa['pa_score'],
             'pa_required': pa['pa_required'],
             'pa_present': pa['pa_present'],
             'pa_issues': ' | '.join(pa['issues']),
         })
-
     gov_df = pd.DataFrame(gov_rows)
-
     gov_meta = {
         'available': True,
+        'consent_available': consent_available,
+        'pa_available': pa_available_here and PA_AVAILABLE,
         'mean_mds': float(gov_df['mds_score'].mean()),
         'below_80': int((gov_df['mds_score'] < 0.80).sum()),
         'below_60': int((gov_df['mds_score'] < 0.60).sum()),
@@ -450,12 +441,24 @@ def run_assessment(file_bytes, region_name):
         'pa_valid': int(((gov_df['pa_required'] == True) & (gov_df['pa_score'] >= 0.95)).sum()),
     }
 
+    schema_report = {
+        'input_columns': len(original_columns),
+        'mapped': len(mapping),
+        'unresolved': unresolved,
+        'inferred': inferred,
+        'missing_canonical': [f for f in CANONICAL_FIELDS if f not in original_columns],
+        'coding_available': coding_available,
+        'drg_available': drg_available,
+        'consent_available': consent_available,
+        'pa_available': pa_available_here and PA_AVAILABLE,
+    }
+
     meta = {
         'total_raw': total_raw, 'missing_ids': missing_ids,
         'missing_dob': missing_dob, 'dup_ids': dup_ids,
         'total_normalized': total_normalized,
     }
-    return results_df, meta, df, clinical_df, clinical_meta, drg_df, drg_meta, gov_df, gov_meta
+    return results_df, meta, df, clinical_df, clinical_meta, drg_df, drg_meta, gov_df, gov_meta, schema_report
 
 with st.sidebar:
     st.subheader('Configuration')
@@ -471,28 +474,55 @@ with st.sidebar:
 
     st.warning('Privacy Notice: This demo uses synthetic data only. Do not upload real patient health information (PHI).')
 
-    sample_df = pd.DataFrame(region['sample_data'])
-    st.download_button(
-        label=f'Download {selected_region} Sample CSV',
-        data=sample_df.to_csv(index=False).encode('utf-8'),
-        file_name=f'sample_{selected_region.split()[0].lower()}.csv',
-        mime='text/csv',
-        use_container_width=True,
-    )
+    st.markdown('**Generate a sample**')
+    if st.button(f'Generate {selected_region} Sample (100 records)', use_container_width=True):
+        st.session_state['sample_df'] = generate_sample(selected_region, n=100)
+
+    if 'sample_df' in st.session_state:
+        st.download_button(
+            label='📥 Download Generated Sample',
+            data=st.session_state['sample_df'].to_csv(index=False).encode('utf-8'),
+            file_name=f'sample_{selected_region.split()[0].lower()}_100.csv',
+            mime='text/csv',
+            use_container_width=True,
+        )
+
     uploaded_file = st.file_uploader('Upload patient records (CSV)', type=['csv'])
 
 if uploaded_file is None:
-    st.info(f'Selected region: {selected_region}. Upload a CSV in the sidebar to begin.')
+    st.info(f'Selected region: {selected_region}. Generate a sample or upload your own CSV to begin. Any CSV with patient records will work — column names and formatting are handled automatically.')
     st.stop()
 
 result = run_assessment(uploaded_file.getvalue(), selected_region)
 
 if result[0] is None:
-    st.error(f'Missing required columns: {", ".join(result[1]["missing"])}')
-    st.info(f'Columns found: {", ".join(result[1]["found"])}')
+    st.error('The uploaded file has no columns. Please check the CSV and try again.')
     st.stop()
 
-results_df, meta, df_meta, clinical_df, clinical_meta, drg_df, drg_meta, gov_df, gov_meta = result
+results_df, meta, df_meta, clinical_df, clinical_meta, drg_df, drg_meta, gov_df, gov_meta, schema = result
+
+with st.expander('📋 Schema Analysis', expanded=(schema['mapped'] < schema['input_columns'])):
+    st.markdown(f'**Input:** {schema["input_columns"]} columns · **Mapped to canonical schema:** {schema["mapped"]} columns')
+    if schema['inferred']:
+        st.markdown('**Auto-detected by content:**')
+        for item in schema['inferred']:
+            st.markdown(f"- `{item['column']}` → `{item['field']}` (confidence {item['confidence']:.2f})")
+    if schema['unresolved']:
+        st.markdown(f'**Unrecognized columns ({len(schema["unresolved"])}):** ' + ', '.join(f'`{c}`' for c in schema['unresolved']))
+    if schema['missing_canonical']:
+        core = [f for f in schema['missing_canonical'] if f in ('emirates_id', 'given_name', 'family_name', 'date_of_birth')]
+        if core:
+            st.markdown(f'**Core identity fields not present in this file:** ' + ', '.join(f'`{f}`' for f in core))
+        other = [f for f in schema['missing_canonical'] if f not in ('emirates_id', 'given_name', 'family_name', 'date_of_birth')]
+        if other:
+            st.caption(f'Other canonical fields not present: ' + ', '.join(f'`{f}`' for f in other))
+    st.markdown('---')
+    st.markdown('**Module availability for this file:**')
+    st.markdown(f"- Identity Trust: **available**")
+    st.markdown(f"- Coding Coherence: **{'available' if schema['coding_available'] else 'not available — no diagnosis_code or procedure_code column'}**")
+    st.markdown(f"- DRG Readiness: **{'available' if schema['drg_available'] else 'not available — no encounter_type column'}**")
+    st.markdown(f"- Consent Compliance: **{'available' if schema['consent_available'] else 'not available — no consent_status column'}**")
+    st.markdown(f"- Prior-Authorization: **{'available' if schema['pa_available'] else 'not available — no preauth_reference column'}**")
 
 tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs([
     'Executive Dashboard', 'Flagged Records',
@@ -502,11 +532,12 @@ tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs([
 ])
 
 with tab1:
-    col1, col2, col3, col4 = st.columns(4)
-    col1.metric('Total Records', len(results_df))
-    col2.metric('Auto-Linked', len(results_df[results_df['decision'] == 'AUTO_LINK']))
-    col3.metric('Flagged', len(results_df[results_df['decision'] == 'LINK_WITH_FLAG']))
-    col4.metric('Quarantined', len(results_df[results_df['decision'] == 'QUARANTINE']))
+    c1, c2, c3, c4, c5 = st.columns(5)
+    c1.metric('Total Records', len(results_df))
+    c2.metric('Auto-Linked', len(results_df[results_df['decision'] == 'AUTO_LINK']))
+    c3.metric('Flagged', len(results_df[results_df['decision'] == 'LINK_WITH_FLAG']))
+    c4.metric('Quarantined', len(results_df[results_df['decision'] == 'QUARANTINE']))
+    c5.metric('Insufficient Data', len(results_df[results_df['decision'] == 'INSUFFICIENT_DATA']))
     st.divider()
 
     st.subheader('Decision Breakdown')
@@ -522,9 +553,9 @@ with tab1:
     )
 
     st.subheader('Facility Risk Profile')
-    fl = results_df[results_df['decision'].isin(['LINK_WITH_FLAG', 'QUARANTINE'])]
+    fl = results_df[results_df['decision'].isin(['LINK_WITH_FLAG', 'QUARANTINE', 'INSUFFICIENT_DATA'])]
     if not fl.empty:
-        fac = fl['source_facility'].value_counts().reset_index()
+        fac = fl['source_facility'].replace('', '(unset)').value_counts().reset_index()
         fac.columns = ['Facility', 'Flagged Count']
         st.altair_chart(
             alt.Chart(fac).mark_bar(color='#C62828').encode(
@@ -551,11 +582,11 @@ with tab1:
     )
 
 with tab2:
-    flagged = results_df[results_df['decision'].isin(['LINK_WITH_FLAG', 'QUARANTINE'])].copy()
+    flagged = results_df[results_df['decision'].isin(['LINK_WITH_FLAG', 'QUARANTINE', 'INSUFFICIENT_DATA'])].copy()
     if flagged.empty:
         st.success('All records processed cleanly. No flags raised.')
     else:
-        pri = {'QUARANTINE': 0, 'LINK_WITH_FLAG': 1}
+        pri = {'INSUFFICIENT_DATA': 0, 'QUARANTINE': 1, 'LINK_WITH_FLAG': 2}
         flagged['_p'] = flagged['decision'].map(pri)
         flagged = flagged.sort_values(['_p', 'trust_score']).drop(columns='_p')
 
@@ -587,7 +618,7 @@ with tab2:
         st.caption(f'Rendering {len(to_render)} of {len(filtered)} filtered records.')
 
         for _, row in to_render.iterrows():
-            with st.expander(f'{row["canonical_id"]} - {row["given_name"]} {row["family_name"]} ({row["decision"]})'):
+            with st.expander(f'{row["canonical_id"]} - {row["given_name"] or "(no name)"} {row["family_name"]} ({row["decision"]})'):
                 st.markdown('**Record ID (click the copy icon):**')
                 st.code(row['canonical_id'], language=None)
                 st.write(f'**Trust Score:** {row["trust_score"]}')
@@ -625,26 +656,20 @@ with tab3:
 
 with tab4:
     st.subheader('Coding & Episode Coherence')
-    st.markdown('Rule-based checks on diagnosis codes, procedure codes, and episode timelines.')
-
     if not clinical_meta.get('available'):
-        st.info('This file does not contain clinical columns.')
+        st.info('This check could not run because the uploaded file has no `diagnosis_code` or `procedure_code` column. The rest of the demo works normally.')
     else:
         cc1, cc2, cc3, cc4 = st.columns(4)
         cc1.metric('ICD Issues', clinical_meta['icd_issues'])
         cc2.metric('ICD-CPT Mismatches', clinical_meta['icd_cpt_mismatches'])
         cc3.metric('Timeline Errors', clinical_meta['timeline_errors'])
         cc4.metric('Triage-Cost Anomalies', clinical_meta['triage_anomalies'])
-
         st.divider()
-
         issue_counts = pd.DataFrame({
             'Issue': ['ICD Issues', 'ICD-CPT Mismatches', 'Timeline Errors', 'Triage-Cost Anomalies', 'Duplicate Episodes'],
             'Count': [
-                clinical_meta['icd_issues'],
-                clinical_meta['icd_cpt_mismatches'],
-                clinical_meta['timeline_errors'],
-                clinical_meta['triage_anomalies'],
+                clinical_meta['icd_issues'], clinical_meta['icd_cpt_mismatches'],
+                clinical_meta['timeline_errors'], clinical_meta['triage_anomalies'],
                 len(clinical_meta['duplicate_episodes']),
             ],
         })
@@ -656,20 +681,14 @@ with tab4:
             ).properties(height=280),
             use_container_width=True,
         )
-
         st.metric('Mean Clinical Coherence Score', f'{clinical_meta["mean_coherence"]:.3f}')
-
         st.divider()
         st.subheader('Records with Coding Issues')
-
         problematic = clinical_df[
-            (clinical_df['icd_exists'] < 1.0) |
-            (clinical_df['icd_cpt_match'] == 0.0) |
-            (clinical_df['episode_timeline'] == 0.0) |
-            (clinical_df['triage_cost'] == 0.0) |
+            (clinical_df['icd_exists'] < 1.0) | (clinical_df['icd_cpt_match'] == 0.0) |
+            (clinical_df['episode_timeline'] == 0.0) | (clinical_df['triage_cost'] == 0.0) |
             (clinical_df['admission_after_dob'] == 0.0)
         ].copy()
-
         if problematic.empty:
             st.success('No coding or episode coherence issues detected.')
         else:
@@ -684,30 +703,24 @@ with tab4:
                 data=problematic.to_csv(index=False).encode('utf-8'),
                 file_name='coding_coherence_report.csv', mime='text/csv',
             )
-
         if clinical_meta['duplicate_episodes']:
             st.divider()
             st.subheader('Duplicate Episodes')
-            st.markdown('Episode IDs claimed by more than one canonical patient.')
             dup_rows = [{'episode_id': ep, 'claimed_by': ', '.join(ids)} for ep, ids in clinical_meta['duplicate_episodes'].items()]
             st.dataframe(pd.DataFrame(dup_rows), use_container_width=True)
 
 with tab5:
     st.subheader('DRG Readiness')
-    st.markdown('Validates whether inpatient records have every input the IR-DRG grouper needs.')
-
     if not drg_meta.get('available'):
-        st.info('No inpatient records found in this file.')
+        st.info('This check could not run because the uploaded file has no `encounter_type` column (or no inpatient records). The rest of the demo works normally.')
     else:
         d1, d2, d3, d4 = st.columns(4)
         d1.metric('Inpatient Records', drg_meta['inpatient_count'])
         d2.metric('Fully Ready', drg_meta['fully_ready'])
         d3.metric('Partial', drg_meta['partial'])
         d4.metric('Not Ready', drg_meta['not_ready'])
-
         st.divider()
         st.metric('Mean DRG Readiness', f'{drg_meta["mean_readiness"]:.3f}')
-
         readiness_counts = pd.DataFrame({
             'Status': ['Fully Ready', 'Partial', 'Not Ready'],
             'Count': [drg_meta['fully_ready'], drg_meta['partial'], drg_meta['not_ready']],
@@ -720,7 +733,6 @@ with tab5:
             ).properties(height=220),
             use_container_width=True,
         )
-
         st.divider()
         st.subheader('Most Common Missing Inputs')
         missing_counter = {}
@@ -741,17 +753,12 @@ with tab5:
                 ).properties(height=250),
                 use_container_width=True,
             )
-        else:
-            st.success('No missing inputs detected across inpatient records.')
-
         st.divider()
         st.subheader('Inpatient Records with DRG Issues')
-
         problematic_drg = drg_df[
             (drg_df['applicable'] == True) &
             ((drg_df['drg_readiness_score'] < 1.0) | (drg_df['issues'] != ''))
         ].copy()
-
         if problematic_drg.empty:
             st.success('All inpatient records are fully DRG-ready.')
         else:
@@ -760,23 +767,19 @@ with tab5:
                             'drg_readiness_score', 'missing_inputs', 'issues']
             display_cols = [c for c in display_cols if c in problematic_drg.columns]
             st.dataframe(problematic_drg[display_cols], use_container_width=True)
-
             st.download_button(
                 label='Download DRG Readiness Report (CSV)',
                 data=problematic_drg.to_csv(index=False).encode('utf-8'),
-                file_name='drg_readiness_report.csv',
-                mime='text/csv',
+                file_name='drg_readiness_report.csv', mime='text/csv',
             )
 
 with tab6:
     st.subheader('Data Governance')
-    st.markdown('Minimum Data Set completeness, consent compliance, and prior-authorization checks. All rule-based and deterministic.')
-
     g1, g2, g3, g4 = st.columns(4)
     g1.metric('Mean MDS Score', f'{gov_meta["mean_mds"]:.3f}')
     g2.metric('Below 80% MDS', gov_meta['below_80'])
-    g3.metric('Consent Blocked', gov_meta['consent_blocked'])
-    g4.metric('Consent Missing', gov_meta['consent_missing'])
+    g3.metric('Consent Blocked', gov_meta['consent_blocked'] if gov_meta['consent_available'] else 'N/A')
+    g4.metric('Consent Missing', gov_meta['consent_missing'] if gov_meta['consent_available'] else 'N/A')
 
     st.divider()
     st.subheader('MDS Completeness Distribution')
@@ -818,51 +821,51 @@ with tab6:
             use_container_width=True,
         )
 
-    st.divider()
-    st.subheader('Consent Status Breakdown')
-    consent_counts = gov_df['consent_state'].value_counts().reset_index()
-    consent_counts.columns = ['Status', 'Count']
-    st.altair_chart(
-        alt.Chart(consent_counts).mark_bar(color='#00838F').encode(
-            x=alt.X('Count:Q', title='Records'),
-            y=alt.Y('Status:N', sort='-x', title=''),
-            tooltip=['Status', 'Count'],
-        ).properties(height=220),
-        use_container_width=True,
-    )
+    if gov_meta['consent_available']:
+        st.divider()
+        st.subheader('Consent Status Breakdown')
+        consent_counts = gov_df['consent_state'].value_counts().reset_index()
+        consent_counts.columns = ['Status', 'Count']
+        st.altair_chart(
+            alt.Chart(consent_counts).mark_bar(color='#00838F').encode(
+                x=alt.X('Count:Q', title='Records'),
+                y=alt.Y('Status:N', sort='-x', title=''),
+                tooltip=['Status', 'Count'],
+            ).properties(height=220),
+            use_container_width=True,
+        )
+        cns1, cns2, cns3, cns4 = st.columns(4)
+        cns1.metric('Granted', gov_meta['consent_granted'])
+        cns2.metric('Restricted', gov_meta['consent_restricted'])
+        cns3.metric('Denied / Withdrawn', gov_meta['consent_blocked'])
+        cns4.metric('Missing', gov_meta['consent_missing'])
+        if gov_meta['consent_blocked'] > 0:
+            st.error(f'{gov_meta["consent_blocked"]} record(s) have denied or withdrawn consent — these must not be shared without further review.')
+    else:
+        st.divider()
+        st.info('Consent compliance check is not available for this file (no `consent_status` column).')
 
-    cns1, cns2, cns3, cns4 = st.columns(4)
-    cns1.metric('Granted', gov_meta['consent_granted'])
-    cns2.metric('Restricted', gov_meta['consent_restricted'])
-    cns3.metric('Denied / Withdrawn', gov_meta['consent_blocked'])
-    cns4.metric('Missing', gov_meta['consent_missing'])
-
-    if gov_meta['consent_blocked'] > 0:
-        st.error(f'{gov_meta["consent_blocked"]} record(s) have denied or withdrawn consent — these must not be shared without further review.')
-
-    if PA_AVAILABLE:
+    if gov_meta['pa_available']:
         st.divider()
         st.subheader('Prior-Authorization Status')
-        st.markdown('Procedures that require pre-authorization under DHA/DOH rules. Missing or expired PA is a documented rejection cause.')
-
         pa1, pa2, pa3 = st.columns(3)
         pa1.metric('PA-Required Procedures', gov_meta['pa_required'])
         pa2.metric('Missing PA Reference', gov_meta['pa_missing'])
         pa3.metric('Valid PA on File', gov_meta['pa_valid'])
-
         if gov_meta['pa_missing'] > 0:
             st.error(f'{gov_meta["pa_missing"]} claim(s) will be rejected: procedure requires pre-authorization but no PA reference is on file.')
+    else:
+        st.divider()
+        st.info('Prior-authorization check is not available for this file (no `preauth_reference` column).')
 
     st.divider()
     st.subheader('Records with Governance Issues')
-
     problematic_gov = gov_df[
         (gov_df['mds_score'] < 0.80) |
         (gov_df['consent_state'].isin(['denied', 'withdrawn', 'missing'])) |
         (gov_df['consent_issues'] != '') |
         ((gov_df['pa_required'] == True) & (gov_df['pa_present'] == False))
     ].copy()
-
     if problematic_gov.empty:
         st.success('No governance issues detected.')
     else:
@@ -872,18 +875,14 @@ with tab6:
                         'pa_score', 'pa_issues']
         display_cols = [c for c in display_cols if c in problematic_gov.columns]
         st.dataframe(problematic_gov[display_cols], use_container_width=True)
-
         st.download_button(
             label='Download Governance Report (CSV)',
             data=problematic_gov.to_csv(index=False).encode('utf-8'),
-            file_name='governance_report.csv',
-            mime='text/csv',
+            file_name='governance_report.csv', mime='text/csv',
         )
 
 with tab7:
     st.subheader('Tamper-Evident Audit Trail')
-    st.markdown('Every decision in this batch is logged with a SHA-256 hash chain. Any modification breaks verification.')
-
     ac1, ac2 = st.columns(2)
     with ac1:
         if st.button('Verify audit chain'):
@@ -901,24 +900,15 @@ with tab7:
                     file_name='audit_log.jsonl',
                     mime='application/jsonl',
                 )
-        else:
-            st.caption('Log written after first batch is processed.')
-
     st.divider()
-
     st.subheader('Data Normalization Log')
-    st.markdown('Shows exactly what was cleaned before scoring. Formatting differences do not trigger flags.')
     st.metric('Records Normalized', meta['total_normalized'])
-
     st.divider()
     st.subheader('Export Standardized Data')
-    st.markdown('Download the cleaned, schema-mapped version of this file.')
-
     export_cols = ['canonical_id', 'emirates_id', 'given_name', 'family_name',
-                   'date_of_birth', 'nationality', 'source_facility', 'registration_date']
+                   'date_of_birth', 'gender', 'nationality', 'source_facility', 'registration_date']
     export_cols = [c for c in export_cols if c in df_meta.columns]
     cleaned = df_meta[export_cols].rename(columns={'emirates_id': region['id_label'].replace(' ', '_').lower()})
-
     st.download_button(
         label='Download Cleaned & Standardized CSV',
         data=cleaned.to_csv(index=False).encode('utf-8'),
@@ -926,7 +916,6 @@ with tab7:
         mime='text/csv',
         use_container_width=True,
     )
-
     st.divider()
     if meta['total_normalized'] > 0:
         rows = []
@@ -947,7 +936,6 @@ with tab7:
             data=cdf.to_csv(index=False).encode('utf-8'),
             file_name='normalization_log.csv', mime='text/csv',
         )
-
     st.divider()
     st.subheader('Source Data Quality Snapshot')
     c1, c2, c3 = st.columns(3)
