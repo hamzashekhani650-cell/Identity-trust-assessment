@@ -10,10 +10,10 @@ Endpoints:
   POST /assess              — accept a JSON patient record, return decision
   POST /assess-hl7          — accept a raw HL7 v2 message, return decision
   POST /assess-batch        — accept a list of JSON records, return decisions
+  POST /reset               — clear in-memory state (testing only)
 
 Auth:
   X-API-Key header. In production, set TRUST_LAYER_API_KEY env var.
-  If unset, the service runs in open mode (development only).
 
 Configuration:
   REGION_PROFILE — 'UAE (DOH)' or 'India (ABDM)'. Default UAE.
@@ -33,8 +33,44 @@ from pydantic import BaseModel
 
 from trust_layer.scoring import compute_trust_score
 from trust_layer.router import route_decision_hard
-from trust_layer.validators import CrossRecordValidator
 from trust_layer.hl7_ingest import parse_hl7_message, validate_hl7_structure
+
+
+# ============================================================
+# Self-contained cross-record validator
+# ============================================================
+class _CrossRecordValidator:
+    def __init__(self):
+        self.identifier_index = {}
+        self.name_dob_index = {}
+
+    def add_record(self, record):
+        if getattr(record, 'emirates_id', None):
+            self.identifier_index.setdefault(record.emirates_id, set()).add(record.canonical_id)
+        key = (
+            (getattr(record, 'given_name', '') or '').strip().lower(),
+            (getattr(record, 'family_name', '') or '').strip().lower(),
+            getattr(record, 'date_of_birth', '') or '',
+        )
+        if key != ('', '', ''):
+            self.name_dob_index.setdefault(key, set()).add(record.canonical_id)
+
+    def validate(self, record):
+        eid = getattr(record, 'emirates_id', None)
+        if eid and eid in self.identifier_index:
+            owners = self.identifier_index[eid]
+            if record.canonical_id not in owners:
+                return 0.0
+        key = (
+            (getattr(record, 'given_name', '') or '').strip().lower(),
+            (getattr(record, 'family_name', '') or '').strip().lower(),
+            getattr(record, 'date_of_birth', '') or '',
+        )
+        if key != ('', '', '') and key in self.name_dob_index:
+            owners = self.name_dob_index[key]
+            if record.canonical_id not in owners:
+                return 0.5
+        return 1.0
 
 
 API_KEY = os.environ.get('TRUST_LAYER_API_KEY', '')
@@ -98,10 +134,7 @@ app = FastAPI(
     version='v0.6.0',
 )
 
-# Single-process stateful validator. In production with multiple workers,
-# this should be backed by Redis or a shared MPI service. For a shadow-mode
-# pilot on a single instance, this is sufficient.
-_cross_validator = CrossRecordValidator()
+_cross_validator = _CrossRecordValidator()
 
 
 def _check_auth(x_api_key):
@@ -128,7 +161,6 @@ def _normalize_id(value):
 def _score_record(payload):
     cfg = REGION_CONFIG[REGION_PROFILE]
 
-    # Normalize inputs the same way the CSV pipeline does
     given = _normalize_text(payload.given_name)
     family = _normalize_text(payload.family_name)
     dob = str(payload.date_of_birth).strip()[:10]
@@ -136,7 +168,6 @@ def _score_record(payload):
     facility = _normalize_text(payload.source_facility)
     canonical_id = payload.canonical_id or 'UNKNOWN'
 
-    # Dimension 1: Completeness
     present = 0
     required = cfg['required_fields']
     fields = {
@@ -150,14 +181,12 @@ def _score_record(payload):
             present += 1
     completeness = round(present / len(required), 2) if required else 1.0
 
-    # Dimension 2: Temporal validity
     try:
         year = int(dob[:4])
         temporal = 1.0 if 1900 <= year <= 2025 else 0.3
     except (ValueError, TypeError):
         temporal = 0.0
 
-    # Dimension 3: Identity consistency
     if not eid:
         identity = 0.0
     elif re.match(cfg['id_pattern'], eid):
@@ -165,7 +194,6 @@ def _score_record(payload):
     else:
         identity = 0.3
 
-    # Dimension 4: Provenance
     if not facility:
         provenance = 0.0
     elif facility in cfg['trusted_facilities']:
@@ -173,7 +201,6 @@ def _score_record(payload):
     else:
         provenance = 0.7
 
-    # Dimension 5: Cross-record consistency
     class _Rec:
         pass
     rec = _Rec()
@@ -195,7 +222,6 @@ def _score_record(payload):
     score = compute_trust_score(**dims)
     decision = route_decision_hard(score, cross_record, THRESHOLD_AUTO, THRESHOLD_QUAR)
 
-    # Explanation
     explanation = 'Record is clean and trusted.'
     primary_issue = 'None'
     if decision in ('LINK_WITH_FLAG', 'QUARANTINE'):
@@ -221,7 +247,6 @@ def _score_record(payload):
             explanation = f'{cfg["id_label"]} format does not match region standard.'
             primary_issue = 'Malformed Identifier'
 
-    # Register for future collision detection
     _cross_validator.add_record(rec)
 
     return {
@@ -282,10 +307,9 @@ def assess_batch(payloads: List[PatientInput], x_api_key: Optional[str] = Header
 
 @app.post('/reset')
 def reset_state(x_api_key: Optional[str] = Header(None)):
-    '''Clear the in-memory cross-record validator. Useful for tests.'''
     _check_auth(x_api_key)
     global _cross_validator
-    _cross_validator = CrossRecordValidator()
+    _cross_validator = _CrossRecordValidator()
     return {'status': 'reset'}
 
 
