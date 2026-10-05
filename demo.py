@@ -14,6 +14,7 @@ from trust_layer.mds_validators import check_mds_completeness
 from trust_layer.consent_validators import validate_consent
 from trust_layer.schema_mapper import map_columns, CANONICAL_FIELDS, detect_output_file
 from trust_layer.sample_generator import generate_sample
+from trust_layer.hl7_tab import render_hl7_tab
 
 try:
     from trust_layer.prior_auth_validators import validate_preauth
@@ -38,6 +39,8 @@ This demo uses a revised scoring configuration, tuned separately from the publis
 The revised values were tuned for realistic flag rates on messy real-world data. A hospital pilot should re-derive both using the paper's methodology.
 
 This tool accepts any CSV. It maps incoming column names to a canonical schema, normalizes formatting differences, and processes whatever identity, clinical, and governance fields are present. Missing fields are treated as blank, and any check that cannot run is marked "not available" without stopping the rest of the pipeline.
+
+For hospitals that send HL7 v2 messages directly, the HL7 Input tab accepts a raw ADT message, parses it, and scores it against the same five identity dimensions.
     ''')
 
 AUDIT_LOG_PATH = '/tmp/audit_log.jsonl'
@@ -239,9 +242,6 @@ def run_assessment(file_bytes, region_name):
     mapping, unresolved, inferred = map_columns(df)
     df = df.rename(columns=mapping)
 
-    # Preserve original names for export
-    original_name_map = {v: k for k, v in mapping.items()}
-
     for field in CANONICAL_FIELDS:
         if field not in df.columns:
             df[field] = ''
@@ -259,7 +259,6 @@ def run_assessment(file_bytes, region_name):
     df['_orig_id'] = df['emirates_id'].astype(str).replace('nan', '')
     df['_orig_gender'] = df['gender'].astype(str).replace('nan', '')
     df['_orig_nationality'] = df['nationality'].astype(str).replace('nan', '')
-    df['_orig_facility'] = df['source_facility'].astype(str).replace('nan', '')
 
     df['given_name'] = df['given_name'].apply(normalize_text)
     df['family_name'] = df['family_name'].apply(normalize_text)
@@ -554,7 +553,6 @@ if result[0] is None:
 
 results_df, meta, df_meta, clinical_df, clinical_meta, drg_df, drg_meta, gov_df, gov_meta, schema = result
 
-# Warnings
 if schema['looks_like_output']:
     st.error('⚠️ This file appears to be a scored export from another system, not raw patient records. It contains output fields (Decision, MDS_Score, etc.) but no name columns. Upload the source records instead.')
 
@@ -584,11 +582,11 @@ with st.expander('📋 Schema Analysis', expanded=(schema['mapped'] < schema['in
     st.markdown(f"- Consent Compliance: **{'available' if schema['consent_available'] else 'not available — no consent_status column'}**")
     st.markdown(f"- Prior-Authorization: **{'available' if schema['pa_available'] else 'not available — no preauth_reference column'}**")
 
-tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs([
+tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8 = st.tabs([
     'Executive Dashboard', 'Flagged Records',
     'Batch Results', 'Coding Coherence',
     'DRG Readiness', 'Data Governance',
-    'Audit Trail & Normalization',
+    'Audit Trail & Normalization', 'HL7 Input',
 ])
 
 with tab1:
@@ -966,7 +964,6 @@ with tab7:
                    'date_of_birth', 'gender', 'nationality', 'source_facility', 'registration_date']
     export_cols = [c for c in export_cols if c in df_meta.columns]
     cleaned = df_meta[export_cols].copy()
-    # Rename columns back to original names where a mapping exists
     original_names = schema.get('original_names', {})
     cleaned = cleaned.rename(columns=original_names)
     st.download_button(
@@ -1006,3 +1003,6 @@ with tab7:
     c1.metric('Total Records', meta['total_raw'])
     c2.metric(f'Missing {region["id_label"]}', meta['missing_ids'])
     c3.metric(f'Duplicate {region["id_label"]}', meta['dup_ids'])
+
+with tab8:
+    render_hl7_tab(region, selected_color)
