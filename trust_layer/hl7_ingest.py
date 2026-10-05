@@ -154,8 +154,8 @@ def parse_hl7_message(msg):
     if msh:
         fields = _fields(msh)
         # fields[0] = 'MSH', fields[1] = encoding chars, fields[2] = sending app
-        if len(fields) >= 6:
-            record['source_facility'] = fields[5].strip() or (fields[3].strip() if len(fields) >= 4 else '')
+        if len(fields) >= 4:
+            record['source_facility'] = fields[3].strip() or (fields[2].strip() if len(fields) >= 3 else '')
         if len(fields) >= 10:
             record['canonical_id'] = fields[9].strip()
         if len(fields) >= 9:
