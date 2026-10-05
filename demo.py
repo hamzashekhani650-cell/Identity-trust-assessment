@@ -1,33 +1,17 @@
 '''
-Identity Trust Assessment — enterprise layout.
+Identity Trust Assessment — application entry point.
 
-Navigation is via sidebar, organized by task:
-  Overview
-    - Dashboard
-  Analyze
-    - HL7 Stream           (real-time message input — the production path)
-    - Batch Upload         (CSV — retrospective / pre-pilot path)
-  Reports
-    - Flagged Records
-    - Coding Coherence
-    - DRG Readiness
-    - Data Governance
-  Compliance
-    - Audit Trail
-    - Standardization
-  Settings
-    - Configuration
-    - About
-
-State is held in st.session_state so navigation between pages is instant.
+Navigation is organised by task in the sidebar. Assessment state is held
+in st.session_state so navigating between pages is instant.
 '''
 import io
-from datetime import datetime
 import os
 import re
-import streamlit as st
-import pandas as pd
+from datetime import datetime
+
 import altair as alt
+import pandas as pd
+import streamlit as st
 
 from trust_layer.scoring import compute_trust_score
 from trust_layer.router import route_decision_hard
@@ -39,6 +23,7 @@ from trust_layer.mds_validators import check_mds_completeness
 from trust_layer.consent_validators import validate_consent
 from trust_layer.schema_mapper import map_columns, CANONICAL_FIELDS, detect_output_file
 from trust_layer.sample_generator import generate_sample
+
 import ui_theme as ui
 
 try:
@@ -65,21 +50,13 @@ ui.inject_css()
 # ============================================================
 AUDIT_LOG_PATH = '/tmp/audit_log.jsonl'
 
-COLOR_OPTIONS = {
-    'Blue': '#1E90FF', 'Pink': '#FF69B4', 'Red': '#FF0000',
-    'Orange': '#FFA500', 'Purple': '#800080', 'Green': '#32CD32',
-    'Teal': '#008080', 'Magenta': '#FF00FF', 'Indigo': '#4B0082',
-    'Black': '#000000', 'Gray': '#808080', 'Gold': '#FFD700',
-}
 PREFIXES = ['mr.', 'mrs.', 'ms.', 'dr.', 'mr ', 'mrs ', 'ms ', 'dr ']
 SMALL_WORDS = {'and', 'of', 'the', 'at', 'in', 'on', 'for'}
 
-GENDER_CANON = {
-    'm': 'M', 'male': 'M', 'man': 'M',
-    'f': 'F', 'female': 'F', 'woman': 'F',
-    'o': 'O', 'other': 'O',
-    'u': 'U', 'unknown': 'U',
-}
+GENDER_CANON = {'m': 'M', 'male': 'M', 'man': 'M',
+                'f': 'F', 'female': 'F', 'woman': 'F',
+                'o': 'O', 'other': 'O',
+                'u': 'U', 'unknown': 'U'}
 
 NATIONALITY_CANON = {
     'uae': 'UAE', 'unitedarabemirates': 'UAE', 'emirati': 'UAE',
@@ -97,10 +74,8 @@ REGION_PROFILES = {
         'id_pattern': r'^784\d{12}$',
         'id_example': '784-1985-1234567-1',
         'regulatory_body': 'DOH',
-        'trusted_facilities': [
-            'Cleveland Clinic Abu Dhabi', 'Ssmc', 'Al Noor Hospital',
-            'Tawam Hospital', 'Sheikh Khalifa Medical City',
-        ],
+        'trusted_facilities': ['Cleveland Clinic Abu Dhabi', 'Ssmc', 'Al Noor Hospital',
+                               'Tawam Hospital', 'Sheikh Khalifa Medical City'],
         'required_fields': ['emirates_id', 'given_name', 'family_name', 'date_of_birth'],
         'dob_min_year': 1900, 'dob_max_year': 2025,
     },
@@ -109,10 +84,8 @@ REGION_PROFILES = {
         'id_pattern': r'^\d{12}$',
         'id_example': '123456789012',
         'regulatory_body': 'ABDM',
-        'trusted_facilities': [
-            'Manipal Hospital', 'Apollo Hospital', 'Fortis Healthcare',
-            'Max Healthcare', 'Aiims', 'Aiims Delhi', 'Narayana Health',
-        ],
+        'trusted_facilities': ['Manipal Hospital', 'Apollo Hospital', 'Fortis Healthcare',
+                               'Max Healthcare', 'Aiims', 'Aiims Delhi', 'Narayana Health'],
         'required_fields': ['emirates_id', 'given_name', 'family_name', 'date_of_birth'],
         'dob_min_year': 1900, 'dob_max_year': 2025,
     },
@@ -120,30 +93,22 @@ REGION_PROFILES = {
 
 
 # ============================================================
-# Session state initialization
+# Session state
 # ============================================================
-if 'region_name' not in st.session_state:
-    st.session_state['region_name'] = 'UAE (DOH)'
-if 'bar_color_name' not in st.session_state:
-    st.session_state['bar_color_name'] = 'Blue'
-if 'assessment' not in st.session_state:
-    st.session_state['assessment'] = None
-if 'uploaded_name' not in st.session_state:
-    st.session_state['uploaded_name'] = None
-if 'hl7_history' not in st.session_state:
-    st.session_state['hl7_history'] = []
-if 'batch_info' not in st.session_state:
-    st.session_state['batch_info'] = None
-if 'hl7_validator' not in st.session_state:
-    st.session_state['hl7_validator'] = None
+for _k, _v in {
+    'region_name': 'UAE (DOH)',
+    'assessment': None,
+    'uploaded_name': None,
+    'hl7_history': [],
+    'batch_info': None,
+    'hl7_validator': None,
+}.items():
+    if _k not in st.session_state:
+        st.session_state[_k] = _v
 
 
 def _get_config():
     return REGION_PROFILES[st.session_state['region_name']]
-
-
-def _get_color():
-    return COLOR_OPTIONS[st.session_state['bar_color_name']]
 
 
 # ============================================================
@@ -158,8 +123,7 @@ def smart_title(s):
         else:
             out.append(w.title())
     t = ' '.join(out)
-    t = re.sub(r"'S\b", "'s", t)
-    return t
+    return re.sub(r"'S\b", "'s", t)
 
 
 def normalize_text(value):
@@ -174,9 +138,7 @@ def normalize_text(value):
             s = s[len(prefix):].strip()
             break
     s = ' '.join(s.split())
-    if not s:
-        return ''
-    return smart_title(s)
+    return smart_title(s) if s else ''
 
 
 def normalize_id(value):
@@ -227,20 +189,12 @@ def normalize_nationality(value):
     return NATIONALITY_CANON.get(key, s.title())
 
 
-def render_dimension_bar(label, score, color=None):
-    ui.dimension_bar(label, score)
-
-
 # ============================================================
-# Validators (region-aware)
+# Region-aware validators
 # ============================================================
 def validate_completeness_region(rec, config):
-    fields = {
-        'emirates_id': rec.emirates_id,
-        'given_name': rec.given_name,
-        'family_name': rec.family_name,
-        'date_of_birth': rec.date_of_birth,
-    }
+    fields = {'emirates_id': rec.emirates_id, 'given_name': rec.given_name,
+              'family_name': rec.family_name, 'date_of_birth': rec.date_of_birth}
     req = config['required_fields']
     present = sum(1 for f in req if fields.get(f))
     return round(present / len(req), 2) if req else 1.0
@@ -251,9 +205,7 @@ def validate_temporal_region(rec, config):
         return 0.0
     try:
         year = int(rec.date_of_birth[:4])
-        if config['dob_min_year'] <= year <= config['dob_max_year']:
-            return 1.0
-        return 0.3
+        return 1.0 if config['dob_min_year'] <= year <= config['dob_max_year'] else 0.3
     except (ValueError, TypeError):
         return 0.0
 
@@ -261,17 +213,13 @@ def validate_temporal_region(rec, config):
 def validate_identity_region(rec, config):
     if not rec.emirates_id:
         return 0.0
-    if re.match(config['id_pattern'], rec.emirates_id):
-        return 1.0
-    return 0.3
+    return 1.0 if re.match(config['id_pattern'], rec.emirates_id) else 0.3
 
 
 def validate_provenance_region(rec, config):
     if not rec.source_facility:
         return 0.0
-    if rec.source_facility in config['trusted_facilities']:
-        return 1.0
-    return 0.7
+    return 1.0 if rec.source_facility in config['trusted_facilities'] else 0.7
 
 
 class Record:
@@ -281,7 +229,7 @@ class Record:
 
 
 # ============================================================
-# Assessment pipeline (cached)
+# Assessment pipeline
 # ============================================================
 @st.cache_data(show_spinner='Running trust assessment...')
 def run_assessment(file_bytes, region_name):
@@ -289,7 +237,6 @@ def run_assessment(file_bytes, region_name):
 
     df = pd.read_csv(io.BytesIO(file_bytes))
     df.columns = [str(c).strip() for c in df.columns]
-
     if len(df.columns) == 0:
         return None, {'error': True, 'found': [], 'missing': ['any columns']}
 
@@ -335,7 +282,8 @@ def run_assessment(file_bytes, region_name):
     missing_ids = int(df['emirates_id'].isna().sum())
     missing_dob = int((df['date_of_birth'] == '').sum())
     dup_ids = int(df['emirates_id'].dropna().duplicated().sum())
-    total_normalized = int((df['_changed_name'] | df['_changed_dob'] | df['_changed_id'] | df['_changed_gender'] | df['_changed_nationality']).sum())
+    total_normalized = int((df['_changed_name'] | df['_changed_dob'] | df['_changed_id'] |
+                            df['_changed_gender'] | df['_changed_nationality']).sum())
 
     cv = CrossRecordValidator()
     results = []
@@ -364,7 +312,6 @@ def run_assessment(file_bytes, region_name):
 
         id_label = config['id_label']
         reg = config['regulatory_body']
-
         critical_present = sum(1 for v in [rec.emirates_id, rec.given_name, rec.family_name, rec.date_of_birth] if v)
 
         if critical_present < 2:
@@ -398,10 +345,8 @@ def run_assessment(file_bytes, region_name):
                                        f'DOB ({rec.date_of_birth}) match an existing patient, but the {id_label} differs.')
                         primary_issue = 'Potential Name/DOB Collision'
                 elif weakest == 'completeness':
-                    missing_fields = [f for f, v in [
-                        (id_label, rec.emirates_id), ('Given Name', rec.given_name),
-                        ('Family Name', rec.family_name), ('DOB', rec.date_of_birth),
-                    ] if not v]
+                    missing_fields = [f for f, v in [(id_label, rec.emirates_id), ('Given Name', rec.given_name),
+                                                     ('Family Name', rec.family_name), ('DOB', rec.date_of_birth)] if not v]
                     explanation = f'INCOMPLETE DATA: Missing required fields: {", ".join(missing_fields)}.'
                     primary_issue = 'Missing Demographics'
                 elif weakest == 'provenance':
@@ -428,12 +373,8 @@ def run_assessment(file_bytes, region_name):
         audit_entries.append((rec, dims, score, decision))
         cv.add_record(rec)
 
-    log_batch(
-        audit_entries,
-        log_path=AUDIT_LOG_PATH,
-        config_version='v0.7.0-demo',
-        thresholds={'low': 0.75, 'medium': 0.45},
-    )
+    log_batch(audit_entries, log_path=AUDIT_LOG_PATH, config_version='v0.7.0-demo',
+              thresholds={'low': 0.75, 'medium': 0.45})
 
     results_df = pd.DataFrame(results)
 
@@ -445,20 +386,13 @@ def run_assessment(file_bytes, region_name):
             checks = assess_record(row.to_dict())
             clinical_rows.append({
                 'canonical_id': row.get('canonical_id', '?'),
-                'given_name': row.get('given_name', ''),
-                'family_name': row.get('family_name', ''),
-                'diagnosis_code': row.get('diagnosis_code', ''),
-                'procedure_code': row.get('procedure_code', ''),
-                'admission_date': row.get('admission_date', ''),
-                'discharge_date': row.get('discharge_date', ''),
-                'triage_level': row.get('triage_level', ''),
-                'total_cost_aed': row.get('total_cost_aed', ''),
-                'icd_exists': checks['icd_exists'],
-                'icd_cpt_match': checks['icd_cpt_match'],
-                'episode_timeline': checks['episode_timeline'],
-                'admission_after_dob': checks['admission_after_dob'],
-                'triage_cost': checks['triage_cost'],
-                'clinical_coherence_score': checks['clinical_coherence_score'],
+                'given_name': row.get('given_name', ''), 'family_name': row.get('family_name', ''),
+                'diagnosis_code': row.get('diagnosis_code', ''), 'procedure_code': row.get('procedure_code', ''),
+                'admission_date': row.get('admission_date', ''), 'discharge_date': row.get('discharge_date', ''),
+                'triage_level': row.get('triage_level', ''), 'total_cost_aed': row.get('total_cost_aed', ''),
+                'icd_exists': checks['icd_exists'], 'icd_cpt_match': checks['icd_cpt_match'],
+                'episode_timeline': checks['episode_timeline'], 'admission_after_dob': checks['admission_after_dob'],
+                'triage_cost': checks['triage_cost'], 'clinical_coherence_score': checks['clinical_coherence_score'],
             })
         clinical_df = pd.DataFrame(clinical_rows)
         clinical_meta = {
@@ -476,13 +410,10 @@ def run_assessment(file_bytes, region_name):
         r = assess_drg_readiness(row.to_dict())
         drg_rows.append({
             'canonical_id': row.get('canonical_id', '?'),
-            'given_name': row.get('given_name', ''),
-            'family_name': row.get('family_name', ''),
+            'given_name': row.get('given_name', ''), 'family_name': row.get('family_name', ''),
             'encounter_type': row.get('encounter_type', ''),
-            'drg_readiness_score': r['drg_readiness_score'],
-            'applicable': r['applicable'],
-            'missing_inputs': ', '.join(r['missing_inputs']),
-            'issues': ' | '.join(r['issues']),
+            'drg_readiness_score': r['drg_readiness_score'], 'applicable': r['applicable'],
+            'missing_inputs': ', '.join(r['missing_inputs']), 'issues': ' | '.join(r['issues']),
         })
     drg_df = pd.DataFrame(drg_rows)
     drg_applicable = drg_df[drg_df['applicable'] == True]
@@ -509,17 +440,13 @@ def run_assessment(file_bytes, region_name):
         mds_missing = mds['patient_demographics_missing'] + mds['encounter_missing'] + mds['clinical_missing']
         gov_rows.append({
             'canonical_id': row.get('canonical_id', '?'),
-            'given_name': row.get('given_name', ''),
-            'family_name': row.get('family_name', ''),
-            'mds_score': mds['mds_score'],
-            'mds_missing': ', '.join(mds_missing) if mds_missing else '',
+            'given_name': row.get('given_name', ''), 'family_name': row.get('family_name', ''),
+            'mds_score': mds['mds_score'], 'mds_missing': ', '.join(mds_missing) if mds_missing else '',
             'consent_score': consent['consent_score'],
             'consent_state': consent['consent_state'] if consent_available else 'N/A',
             'consent_issues': ' | '.join(consent['issues']),
-            'pa_score': pa['pa_score'],
-            'pa_required': pa['pa_required'],
-            'pa_present': pa['pa_present'],
-            'pa_issues': ' | '.join(pa['issues']),
+            'pa_score': pa['pa_score'], 'pa_required': pa['pa_required'],
+            'pa_present': pa['pa_present'], 'pa_issues': ' | '.join(pa['issues']),
         })
     gov_df = pd.DataFrame(gov_rows)
     gov_meta = {
@@ -545,53 +472,35 @@ def run_assessment(file_bytes, region_name):
     flag_rate = flagged_count / total_records if total_records else 0.0
 
     schema_report = {
-        'input_columns': len(original_columns),
-        'mapped': len(mapping),
-        'unresolved': unresolved,
-        'inferred': inferred,
-        'missing_canonical': missing_canonical,
-        'coding_available': coding_available,
-        'drg_available': drg_available,
-        'consent_available': consent_available,
-        'pa_available': pa_available_here and PA_AVAILABLE,
-        'looks_like_output': looks_like_output,
-        'flag_rate': flag_rate,
-        'flagged_count': flagged_count,
-        'total_records': total_records,
+        'input_columns': len(original_columns), 'mapped': len(mapping),
+        'unresolved': unresolved, 'inferred': inferred, 'missing_canonical': missing_canonical,
+        'coding_available': coding_available, 'drg_available': drg_available,
+        'consent_available': consent_available, 'pa_available': pa_available_here and PA_AVAILABLE,
+        'looks_like_output': looks_like_output, 'flag_rate': flag_rate,
+        'flagged_count': flagged_count, 'total_records': total_records,
         'original_names': mapping,
     }
 
-    meta = {
-        'total_raw': total_raw, 'missing_ids': missing_ids,
-        'missing_dob': missing_dob, 'dup_ids': dup_ids,
-        'total_normalized': total_normalized,
-    }
+    meta = {'total_raw': total_raw, 'missing_ids': missing_ids,
+            'missing_dob': missing_dob, 'dup_ids': dup_ids,
+            'total_normalized': total_normalized}
+
     return results_df, meta, df, clinical_df, clinical_meta, drg_df, drg_meta, gov_df, gov_meta, schema_report
 
 
 # ============================================================
-# Page header helper
-# ============================================================
-def page_header(title, subtitle):
-    st.markdown(f'### {title}')
-    st.caption(subtitle)
-    st.divider()
-
-
-# ============================================================
-# Page: Dashboard
+# Pages
 # ============================================================
 def pg_dashboard():
     st.title('Dashboard')
-    st.caption('Batch overview. Upload a CSV from the Batch Upload page to populate this view.')
+    st.caption('Batch overview. Load a file from Batch Upload, or paste messages in HL7 Stream.')
 
     result = st.session_state.get('assessment')
     if result is None:
-        st.info('No batch loaded yet. Go to **Analyze → Batch Upload** to load a CSV, or **Analyze → HL7 Stream** to score messages in real time.')
+        st.info('No batch loaded yet. Go to **Analyze → Batch Upload** to load a CSV.')
         return
 
     results_df, meta, df_meta, clinical_df, clinical_meta, drg_df, drg_meta, gov_df, gov_meta, schema = result
-
     ui.batch_header(st.session_state.get('batch_info'), st.session_state['region_name'], results_df)
 
     c1, c2, c3, c4, c5 = st.columns(5)
@@ -602,16 +511,17 @@ def pg_dashboard():
     c5.metric('Insufficient Data', len(results_df[results_df['decision'] == 'INSUFFICIENT_DATA']))
 
     st.divider()
-
     col_a, col_b = st.columns(2)
+
     with col_a:
-        st.markdown('**Decision Breakdown**')
+        st.markdown('**Decision breakdown**')
         dc = results_df['decision'].value_counts().reset_index()
         dc.columns = ['Decision', 'Count']
         dc['Decision'] = dc['Decision'].map(lambda d: ui.DECISION_LABELS.get(d, d))
         st.altair_chart(ui.decision_chart(dc, height=250), use_container_width=True)
+
     with col_b:
-        st.markdown('**Facility Risk Profile**')
+        st.markdown('**Facility risk profile**')
         fl = results_df[results_df['decision'].isin(['LINK_WITH_FLAG', 'QUARANTINE', 'INSUFFICIENT_DATA'])]
         if not fl.empty:
             fac = fl['source_facility'].replace('', '(unset)').value_counts().reset_index()
@@ -621,20 +531,17 @@ def pg_dashboard():
         else:
             st.info('No records were flagged.')
 
-    st.markdown('**Dimension Scoring Averages**')
+    st.markdown('**Dimension scoring averages**')
     dm = results_df[['dim_completeness', 'dim_temporal', 'dim_identity', 'dim_provenance', 'dim_cross_record']].mean().reset_index()
     dm.columns = ['Dimension', 'Average Score']
     dm['Dimension'] = ['Completeness', 'Temporal', 'Identity', 'Provenance', 'Cross-Record']
-    st.altair_chart(ui.bar_chart(dm, 'Average Score', 'Dimension', color=ui.ACCENT, height=220,
-                                 domain=[0, 1]), use_container_width=True)
+    st.altair_chart(ui.bar_chart(dm, 'Average Score', 'Dimension', color=ui.ACCENT, height=220, domain=[0, 1]),
+                    use_container_width=True)
 
 
-# ============================================================
-# Page: HL7 Stream
-# ============================================================
 def pg_hl7():
     st.title('HL7 Stream')
-    st.caption('Paste one or more HL7 v2 ADT messages below. Each message is parsed, scored against the five identity dimensions, and routed. The session maintains a persistent validator, so a second message with the same identifier triggers a collision.')
+    st.caption('Paste one or more HL7 v2 ADT messages. Each is parsed, scored against the five identity dimensions, and routed. The session validator remembers past messages, so a second message with the same identifier triggers a collision.')
 
     st.info('In production, messages arrive continuously from the hospital interface engine via the FastAPI endpoint (`/assess-hl7`). This page demonstrates the same parser and scoring logic on pasted input.')
 
@@ -645,29 +552,24 @@ def pg_hl7():
         'PV1|1|O'
     )
 
-    col_a, col_b = st.columns([3, 1])
+    _, col_b = st.columns([3, 1])
     with col_b:
         if st.button('Reset session validator', use_container_width=True):
             st.session_state['hl7_history'] = []
+            st.session_state['hl7_validator'] = None
             st.success('Session cleared.')
 
-    hl7_input = st.text_area(
-        'HL7 v2 message(s). Separate multiple messages with a blank line.',
-        value=default_msg,
-        height=220,
-    )
+    hl7_input = st.text_area('HL7 v2 message(s). Separate multiple messages with a blank line.',
+                             value=default_msg, height=220)
 
     if st.button('Parse and assess', type='primary'):
-        # Split on blank lines to support multiple messages
         raw_msgs = [m.strip() for m in re.split(r'\n\s*\n', hl7_input) if m.strip()]
         if not raw_msgs:
             st.error('No message found.')
             return
 
         config = _get_config()
-        color = _get_color()
 
-        # Build a local validator per session if not present
         if st.session_state['hl7_validator'] is None:
             class _V:
                 def __init__(self):
@@ -676,11 +578,9 @@ def pg_hl7():
                 def add_record(self, r):
                     if getattr(r, 'emirates_id', None):
                         self.identifier_index.setdefault(r.emirates_id, set()).add(r.canonical_id)
-                    key = (
-                        (getattr(r, 'given_name', '') or '').strip().lower(),
-                        (getattr(r, 'family_name', '') or '').strip().lower(),
-                        getattr(r, 'date_of_birth', '') or '',
-                    )
+                    key = ((getattr(r, 'given_name', '') or '').strip().lower(),
+                           (getattr(r, 'family_name', '') or '').strip().lower(),
+                           getattr(r, 'date_of_birth', '') or '')
                     if key != ('', '', ''):
                         self.name_dob_index.setdefault(key, set()).add(r.canonical_id)
                 def validate(self, r):
@@ -688,11 +588,9 @@ def pg_hl7():
                     if eid and eid in self.identifier_index:
                         if r.canonical_id not in self.identifier_index[eid]:
                             return 0.0
-                    key = (
-                        (getattr(r, 'given_name', '') or '').strip().lower(),
-                        (getattr(r, 'family_name', '') or '').strip().lower(),
-                        getattr(r, 'date_of_birth', '') or '',
-                    )
+                    key = ((getattr(r, 'given_name', '') or '').strip().lower(),
+                           (getattr(r, 'family_name', '') or '').strip().lower(),
+                           getattr(r, 'date_of_birth', '') or '')
                     if key != ('', '', '') and key in self.name_dob_index:
                         if r.canonical_id not in self.name_dob_index[key]:
                             return 0.5
@@ -700,12 +598,10 @@ def pg_hl7():
             st.session_state['hl7_validator'] = _V()
 
         validator = st.session_state['hl7_validator']
-
         from trust_layer.hl7_ingest import parse_hl7_message, validate_hl7_structure
 
         for i, msg in enumerate(raw_msgs):
-            st.markdown(f'---')
-            st.markdown(f'### Message {i + 1}')
+            st.markdown(f'---\n### Message {i + 1}')
 
             ok, issues = validate_hl7_structure(msg)
             if not ok:
@@ -715,16 +611,14 @@ def pg_hl7():
             parsed = parse_hl7_message(msg)
 
             with st.expander('Parsed fields', expanded=False):
-                for label, value in [
-                    ('Emirates ID', parsed.get('emirates_id')),
-                    ('Given Name', parsed.get('given_name')),
-                    ('Family Name', parsed.get('family_name')),
-                    ('Gender', parsed.get('gender')),
-                    ('Date of Birth', parsed.get('date_of_birth')),
-                    ('Source Facility', parsed.get('source_facility')),
-                    ('Canonical ID', parsed.get('canonical_id')),
-                    ('Encounter Type', parsed.get('encounter_type')),
-                ]:
+                for label, value in [('Emirates ID', parsed.get('emirates_id')),
+                                     ('Given name', parsed.get('given_name')),
+                                     ('Family name', parsed.get('family_name')),
+                                     ('Gender', parsed.get('gender')),
+                                     ('Date of birth', parsed.get('date_of_birth')),
+                                     ('Source facility', parsed.get('source_facility')),
+                                     ('Canonical ID', parsed.get('canonical_id')),
+                                     ('Encounter type', parsed.get('encounter_type'))]:
                     st.markdown(f'- **{label}:** {value if value else "_(empty)_"}')
 
             rec = Record(
@@ -761,13 +655,8 @@ def pg_hl7():
             else:
                 provenance = 0.7
 
-            dims = {
-                'completeness': completeness,
-                'temporal': temporal,
-                'identity': identity,
-                'provenance': provenance,
-                'cross_record': validator.validate(rec),
-            }
+            dims = {'completeness': completeness, 'temporal': temporal, 'identity': identity,
+                    'provenance': provenance, 'cross_record': validator.validate(rec)}
             score = compute_trust_score(**dims)
             decision = route_decision_hard(score, dims['cross_record'])
 
@@ -784,48 +673,41 @@ def pg_hl7():
             with st.expander('Dimension scores'):
                 for label, key in [('Completeness', 'completeness'), ('Temporal', 'temporal'),
                                    ('Identity', 'identity'), ('Provenance', 'provenance'),
-                                   ('Cross-Record', 'cross_record')]:
-                    render_dimension_bar(label, dims[key], color)
+                                   ('Cross-record', 'cross_record')]:
+                    ui.dimension_bar(label, dims[key])
 
             validator.add_record(rec)
             st.session_state['hl7_history'].append({
-                'msg_index': i + 1,
-                'canonical_id': rec.canonical_id,
+                'msg_index': i + 1, 'canonical_id': rec.canonical_id,
                 'emirates_id': rec.emirates_id,
                 'name': f'{rec.given_name} {rec.family_name}',
-                'decision': decision,
+                'decision': ui.DECISION_LABELS.get(decision, decision),
                 'trust_score': round(score, 3),
             })
 
         if st.session_state['hl7_history']:
             st.divider()
-            st.markdown('### Session History')
+            st.markdown('### Session history')
             st.dataframe(pd.DataFrame(st.session_state['hl7_history']), use_container_width=True)
 
 
-# ============================================================
-# Page: Batch Upload (CSV)
-# ============================================================
 def pg_batch():
     st.title('Batch Upload')
-    st.caption('Upload a CSV of patient records. The schema mapper handles arbitrary column names, and the pipeline processes whatever identity, clinical, and governance fields are present.')
+    st.caption('Upload a CSV of patient records. The schema mapper handles arbitrary column names. The pipeline processes whatever identity, clinical, and governance fields are present.')
 
     st.markdown('**Generate a sample**')
-    col_a, col_b = st.columns([1, 1])
-    with col_a:
-        if st.button(f'Generate {st.session_state["region_name"]} Sample (100 records)'):
-            sample_df = generate_sample(st.session_state['region_name'], n=100)
-            st.download_button(
-                label='Download Generated Sample',
-                data=sample_df.to_csv(index=False).encode('utf-8'),
-                file_name=f'sample_{st.session_state["region_name"].split()[0].lower()}_100.csv',
-                mime='text/csv',
-            )
+    if st.button(f'Generate {st.session_state["region_name"]} sample (100 records)'):
+        sample_df = generate_sample(st.session_state['region_name'], n=100)
+        st.download_button(
+            label='Download generated sample',
+            data=sample_df.to_csv(index=False).encode('utf-8'),
+            file_name=f'sample_{st.session_state["region_name"].split()[0].lower()}_100.csv',
+            mime='text/csv',
+        )
 
     st.divider()
     st.markdown('**Upload your own**')
     uploaded_file = st.file_uploader('CSV file', type=['csv'])
-
     if uploaded_file is None:
         return
 
@@ -845,45 +727,64 @@ def pg_batch():
         return
 
     st.session_state['assessment'] = result
-    st.success(f'Processed. Open **Dashboard** or **Reports** in the sidebar to view results.')
+    st.success('Processed. Open Dashboard or Reports in the sidebar to view results.')
 
     schema = result[9]
-
     if schema['looks_like_output']:
-        st.error('This file appears to be a scored export from another system, not raw patient records. It contains output fields (Decision, MDS_Score, etc.) but no name columns.')
-
+        st.error('This file appears to be a scored export from another system, not raw patient records.')
     if schema['flag_rate'] >= 0.90 and schema['total_records'] > 20:
         st.warning(f'{schema["flag_rate"]*100:.0f}% of records were flagged ({schema["flagged_count"]} of {schema["total_records"]}). This usually means the file is missing critical identity columns.')
 
-    with st.expander('Schema Analysis', expanded=True):
+    with st.expander('Schema analysis', expanded=True):
         st.markdown(f'**Input:** {schema["input_columns"]} columns · **Mapped:** {schema["mapped"]} columns')
         if schema['inferred']:
             st.markdown('**Auto-detected by content:**')
             for item in schema['inferred']:
                 st.markdown(f"- `{item['column']}` → `{item['field']}`")
         if schema['unresolved']:
-            st.markdown(f'**Unrecognized columns:** ' + ', '.join(f'`{c}`' for c in schema['unresolved']))
+            st.markdown(f'**Unrecognised columns:** ' + ', '.join(f'`{c}`' for c in schema['unresolved']))
         if schema['missing_canonical']:
             core = [f for f in schema['missing_canonical'] if f in ('emirates_id', 'given_name', 'family_name', 'date_of_birth')]
             if core:
                 st.markdown(f'**Core identity fields missing:** ' + ', '.join(f'`{f}`' for f in core))
 
 
-# ============================================================
-# Page: Flagged Records
-# ============================================================
+def pg_report():
+    st.title('Summary Report')
+    st.caption('A one-page report for the current batch. Download as HTML and print to PDF from your browser.')
+
+    result = st.session_state.get('assessment')
+    if result is None:
+        st.info('No batch loaded. Go to Analyze → Batch Upload.')
+        return
+
+    results_df, meta, df_meta, clinical_df, clinical_meta, drg_df, drg_meta, gov_df, gov_meta, schema = result
+    report_html = ui.build_report_html(
+        st.session_state.get('batch_info'), st.session_state['region_name'], _get_config(),
+        results_df, schema, clinical_meta, drg_meta, gov_meta,
+    )
+
+    st.download_button(
+        label='Download report (HTML, print to PDF)',
+        data=report_html.encode('utf-8'),
+        file_name=f'data_quality_report_{datetime.now().strftime("%Y%m%d_%H%M")}.html',
+        mime='text/html',
+        type='primary',
+    )
+    import streamlit.components.v1 as components
+    components.html(report_html, height=1100, scrolling=True)
+
+
 def pg_flagged():
     st.title('Flagged Records')
     st.caption('Records routed for manual review.')
 
     result = st.session_state.get('assessment')
     if result is None:
-        st.info('No batch loaded. Go to **Analyze → Batch Upload**.')
+        st.info('No batch loaded. Go to Analyze → Batch Upload.')
         return
 
-    results_df, meta, df_meta, clinical_df, clinical_meta, drg_df, drg_meta, gov_df, gov_meta, schema = result
-    color = _get_color()
-
+    results_df = result[0]
     flagged = results_df[results_df['decision'].isin(['LINK_WITH_FLAG', 'QUARANTINE', 'INSUFFICIENT_DATA'])].copy()
     if flagged.empty:
         st.success('No flagged records.')
@@ -904,7 +805,7 @@ def pg_flagged():
     filtered = flagged[flagged['primary_issue'].isin(sel_issues) & flagged['decision'].isin(sel_dec)]
     st.caption(f'Showing {len(filtered)} of {len(flagged)} records.')
 
-    with st.expander('Bulk Actions'):
+    with st.expander('Bulk actions'):
         st.code('\n'.join(filtered['canonical_id'].astype(str).tolist()), language=None)
 
     STEP = 100
@@ -913,16 +814,17 @@ def pg_flagged():
     to_render = filtered.head(st.session_state.show_count)
 
     for _, row in to_render.iterrows():
-        with st.expander(f'{row["canonical_id"]} · {row["given_name"] or "(no name)"} {row["family_name"]} · {row["decision"]}'):
+        label = ui.DECISION_LABELS.get(row['decision'], row['decision'])
+        with st.expander(f'{row["canonical_id"]} · {row["given_name"] or "(no name)"} {row["family_name"]} · {label}'):
             st.markdown(ui.badge(row['decision']), unsafe_allow_html=True)
             st.code(row['canonical_id'], language=None)
-            st.write(f'**Trust Score:** {row["trust_score"]}')
-            st.write(f'**Primary Issue:** {row["primary_issue"]}')
-            st.info(f'{row["explanation"]}')
+            st.write(f'**Trust score:** {row["trust_score"]}')
+            st.write(f'**Primary issue:** {row["primary_issue"]}')
+            st.info(row['explanation'])
             for lbl, col in [('Completeness', 'dim_completeness'), ('Temporal', 'dim_temporal'),
                              ('Identity', 'dim_identity'), ('Provenance', 'dim_provenance'),
-                             ('Cross-Record', 'dim_cross_record')]:
-                render_dimension_bar(lbl, row[col], color)
+                             ('Cross-record', 'dim_cross_record')]:
+                ui.dimension_bar(lbl, row[col])
 
     if len(filtered) > st.session_state.show_count:
         if st.button('Load more'):
@@ -930,43 +832,37 @@ def pg_flagged():
             st.rerun()
 
     st.download_button(
-        label='Download Filtered Records (CSV)',
+        label='Download filtered records (CSV)',
         data=filtered.to_csv(index=False).encode('utf-8'),
         file_name='flagged_records.csv', mime='text/csv',
     )
 
 
-# ============================================================
-# Page: Coding Coherence
-# ============================================================
 def pg_coding():
     st.title('Coding Coherence')
     st.caption('Rule-based checks on diagnosis codes, procedure codes, and episode timelines.')
 
     result = st.session_state.get('assessment')
     if result is None:
-        st.info('No batch loaded. Go to **Analyze → Batch Upload**.')
+        st.info('No batch loaded. Go to Analyze → Batch Upload.')
         return
 
-    results_df, meta, df_meta, clinical_df, clinical_meta, drg_df, drg_meta, gov_df, gov_meta, schema = result
-
+    clinical_df, clinical_meta = result[3], result[4]
     if not clinical_meta.get('available'):
-        st.info('This check could not run — the uploaded file has no populated `diagnosis_code` or `procedure_code` column.')
+        st.info('This check could not run — the uploaded file has no populated diagnosis_code or procedure_code column.')
         return
 
     cc1, cc2, cc3, cc4 = st.columns(4)
-    cc1.metric('ICD Issues', clinical_meta['icd_issues'])
-    cc2.metric('ICD-CPT Mismatches', clinical_meta['icd_cpt_mismatches'])
-    cc3.metric('Timeline Errors', clinical_meta['timeline_errors'])
-    cc4.metric('Triage-Cost Anomalies', clinical_meta['triage_anomalies'])
+    cc1.metric('ICD issues', clinical_meta['icd_issues'])
+    cc2.metric('ICD-CPT mismatches', clinical_meta['icd_cpt_mismatches'])
+    cc3.metric('Timeline errors', clinical_meta['timeline_errors'])
+    cc4.metric('Triage-cost anomalies', clinical_meta['triage_anomalies'])
 
     issue_counts = pd.DataFrame({
-        'Issue': ['ICD Issues', 'ICD-CPT Mismatches', 'Timeline Errors', 'Triage-Cost Anomalies', 'Duplicate Episodes'],
-        'Count': [
-            clinical_meta['icd_issues'], clinical_meta['icd_cpt_mismatches'],
-            clinical_meta['timeline_errors'], clinical_meta['triage_anomalies'],
-            len(clinical_meta['duplicate_episodes']),
-        ],
+        'Issue': ['ICD issues', 'ICD-CPT mismatches', 'Timeline errors', 'Triage-cost anomalies', 'Duplicate episodes'],
+        'Count': [clinical_meta['icd_issues'], clinical_meta['icd_cpt_mismatches'],
+                  clinical_meta['timeline_errors'], clinical_meta['triage_anomalies'],
+                  len(clinical_meta['duplicate_episodes'])],
     })
     st.altair_chart(ui.bar_chart(issue_counts, 'Count', 'Issue', color=ui.ACCENT, height=240),
                     use_container_width=True)
@@ -982,38 +878,34 @@ def pg_coding():
     else:
         st.dataframe(problematic, use_container_width=True)
         st.download_button(
-            label='Download Coding Coherence Report (CSV)',
+            label='Download coding coherence report (CSV)',
             data=problematic.to_csv(index=False).encode('utf-8'),
             file_name='coding_coherence_report.csv', mime='text/csv',
         )
 
 
-# ============================================================
-# Page: DRG Readiness
-# ============================================================
 def pg_drg():
     st.title('DRG Readiness')
-    st.caption('Validates whether inpatient records have every input the IR-DRG grouper needs.')
+    st.caption('Whether inpatient records have every input the IR-DRG grouper needs.')
 
     result = st.session_state.get('assessment')
     if result is None:
-        st.info('No batch loaded. Go to **Analyze → Batch Upload**.')
+        st.info('No batch loaded. Go to Analyze → Batch Upload.')
         return
 
-    results_df, meta, df_meta, clinical_df, clinical_meta, drg_df, drg_meta, gov_df, gov_meta, schema = result
-
+    drg_df, drg_meta = result[5], result[6]
     if not drg_meta.get('available'):
-        st.info('This check could not run — the uploaded file has no populated `encounter_type` column.')
+        st.info('This check could not run — the uploaded file has no populated encounter_type column.')
         return
 
     d1, d2, d3, d4 = st.columns(4)
-    d1.metric('Inpatient Records', drg_meta['inpatient_count'])
-    d2.metric('Fully Ready', drg_meta['fully_ready'])
+    d1.metric('Inpatient records', drg_meta['inpatient_count'])
+    d2.metric('Fully ready', drg_meta['fully_ready'])
     d3.metric('Partial', drg_meta['partial'])
-    d4.metric('Not Ready', drg_meta['not_ready'])
+    d4.metric('Not ready', drg_meta['not_ready'])
 
     readiness_counts = pd.DataFrame({
-        'Status': ['Fully Ready', 'Partial', 'Not Ready'],
+        'Status': ['Fully ready', 'Partial', 'Not ready'],
         'Count': [drg_meta['fully_ready'], drg_meta['partial'], drg_meta['not_ready']],
     })
     st.altair_chart(ui.bar_chart(readiness_counts, 'Count', 'Status', color=ui.ACCENT, height=180),
@@ -1025,66 +917,56 @@ def pg_drg():
             for field in m.split(', '):
                 missing_counter[field] = missing_counter.get(field, 0) + 1
     if missing_counter:
-        miss_df = pd.DataFrame([
-            {'Field': k, 'Records Missing': v}
-            for k, v in sorted(missing_counter.items(), key=lambda x: -x[1])
-        ])
-        st.markdown('**Most Common Missing Inputs**')
+        miss_df = pd.DataFrame([{'Field': k, 'Records Missing': v}
+                                for k, v in sorted(missing_counter.items(), key=lambda x: -x[1])])
+        st.markdown('**Most common missing inputs**')
         st.altair_chart(ui.bar_chart(miss_df, 'Records Missing', 'Field', color=ui.WARN, height=240),
                         use_container_width=True)
 
-    problematic_drg = drg_df[
-        (drg_df['applicable'] == True) &
-        ((drg_df['drg_readiness_score'] < 1.0) | (drg_df['issues'] != ''))
-    ].copy()
+    problematic_drg = drg_df[(drg_df['applicable'] == True) &
+                             ((drg_df['drg_readiness_score'] < 1.0) | (drg_df['issues'] != ''))].copy()
 
     if not problematic_drg.empty:
         st.dataframe(problematic_drg, use_container_width=True)
         st.download_button(
-            label='Download DRG Readiness Report (CSV)',
+            label='Download DRG readiness report (CSV)',
             data=problematic_drg.to_csv(index=False).encode('utf-8'),
             file_name='drg_readiness_report.csv', mime='text/csv',
         )
 
 
-# ============================================================
-# Page: Data Governance
-# ============================================================
 def pg_gov():
     st.title('Data Governance')
     st.caption('Minimum Data Set completeness, consent compliance, and prior-authorization.')
 
     result = st.session_state.get('assessment')
     if result is None:
-        st.info('No batch loaded. Go to **Analyze → Batch Upload**.')
+        st.info('No batch loaded. Go to Analyze → Batch Upload.')
         return
 
-    results_df, meta, df_meta, clinical_df, clinical_meta, drg_df, drg_meta, gov_df, gov_meta, schema = result
+    gov_df, gov_meta = result[7], result[8]
 
     g1, g2, g3, g4 = st.columns(4)
-    g1.metric('Mean MDS Score', f'{gov_meta["mean_mds"]:.3f}')
+    g1.metric('Mean MDS score', f'{gov_meta["mean_mds"]:.3f}')
     g2.metric('Below 80% MDS', gov_meta['below_80'])
-    g3.metric('Consent Blocked', gov_meta['consent_blocked'] if gov_meta['consent_available'] else 'N/A')
-    g4.metric('Consent Missing', gov_meta['consent_missing'] if gov_meta['consent_available'] else 'N/A')
+    g3.metric('Consent blocked', gov_meta['consent_blocked'] if gov_meta['consent_available'] else 'N/A')
+    g4.metric('Consent missing', gov_meta['consent_missing'] if gov_meta['consent_available'] else 'N/A')
 
     if gov_meta['consent_available'] and gov_meta['consent_blocked'] > 0:
         st.error(f'{gov_meta["consent_blocked"]} record(s) have denied or withdrawn consent — these must not be shared without further review.')
-
     if gov_meta['pa_available'] and gov_meta['pa_missing'] > 0:
         st.error(f'{gov_meta["pa_missing"]} claim(s) will be rejected: procedure requires pre-authorization but no PA reference is on file.')
 
     st.divider()
 
     mds_buckets = pd.DataFrame({
-        'Bucket': ['Perfect (1.0)', 'Good (0.8-0.99)', 'Partial (0.6-0.79)', 'Poor (<0.6)'],
-        'Count': [
-            int((gov_df['mds_score'] >= 0.999).sum()),
-            int(((gov_df['mds_score'] >= 0.80) & (gov_df['mds_score'] < 0.999)).sum()),
-            int(((gov_df['mds_score'] >= 0.60) & (gov_df['mds_score'] < 0.80)).sum()),
-            int((gov_df['mds_score'] < 0.60).sum()),
-        ],
+        'Bucket': ['Perfect (1.0)', 'Good (0.80-0.99)', 'Partial (0.60-0.79)', 'Poor (<0.60)'],
+        'Count': [int((gov_df['mds_score'] >= 0.999).sum()),
+                  int(((gov_df['mds_score'] >= 0.80) & (gov_df['mds_score'] < 0.999)).sum()),
+                  int(((gov_df['mds_score'] >= 0.60) & (gov_df['mds_score'] < 0.80)).sum()),
+                  int((gov_df['mds_score'] < 0.60).sum())],
     })
-    st.markdown('**MDS Completeness Distribution**')
+    st.markdown('**MDS completeness distribution**')
     st.altair_chart(ui.bar_chart(mds_buckets, 'Count', 'Bucket', color=ui.ACCENT, height=200),
                     use_container_width=True)
 
@@ -1098,25 +980,20 @@ def pg_gov():
     if not problematic_gov.empty:
         st.dataframe(problematic_gov, use_container_width=True)
         st.download_button(
-            label='Download Governance Report (CSV)',
+            label='Download governance report (CSV)',
             data=problematic_gov.to_csv(index=False).encode('utf-8'),
             file_name='governance_report.csv', mime='text/csv',
         )
 
 
-# ============================================================
-# Page: Audit Trail
-# ============================================================
 def pg_audit():
     st.title('Audit Trail')
     st.caption('Tamper-evident log of every decision in the current session.')
 
     result = st.session_state.get('assessment')
     if result is None:
-        st.info('No batch loaded. Go to **Analyze → Batch Upload**.')
+        st.info('No batch loaded. Go to Analyze → Batch Upload.')
         return
-
-    results_df, meta, df_meta, clinical_df, clinical_meta, drg_df, drg_meta, gov_df, gov_meta, schema = result
 
     ac1, ac2 = st.columns(2)
     with ac1:
@@ -1129,40 +1006,30 @@ def pg_audit():
     with ac2:
         if os.path.exists(AUDIT_LOG_PATH):
             with open(AUDIT_LOG_PATH, 'rb') as f:
-                st.download_button(
-                    label='Download Audit Log (JSONL)',
-                    data=f.read(),
-                    file_name='audit_log.jsonl',
-                    mime='application/jsonl',
-                )
+                st.download_button('Download audit log (JSONL)', data=f.read(),
+                                   file_name='audit_log.jsonl', mime='application/jsonl')
 
 
-# ============================================================
-# Page: Standardization
-# ============================================================
 def pg_standardization():
     st.title('Standardization')
     st.caption('What was cleaned before scoring, and the export of the standardized file.')
 
     result = st.session_state.get('assessment')
     if result is None:
-        st.info('No batch loaded. Go to **Analyze → Batch Upload**.')
+        st.info('No batch loaded. Go to Analyze → Batch Upload.')
         return
 
-    results_df, meta, df_meta, clinical_df, clinical_meta, drg_df, drg_meta, gov_df, gov_meta, schema = result
-    region = _get_config()
-
-    st.metric('Records Standardized', meta['total_normalized'])
+    meta, df_meta, schema = result[1], result[2], result[9]
+    st.metric('Records standardized', meta['total_normalized'])
 
     export_cols = ['canonical_id', 'emirates_id', 'given_name', 'family_name',
                    'date_of_birth', 'gender', 'nationality', 'source_facility', 'registration_date']
     export_cols = [c for c in export_cols if c in df_meta.columns]
     cleaned = df_meta[export_cols].copy()
-    original_names = schema.get('original_names', {})
-    cleaned = cleaned.rename(columns=original_names)
+    cleaned = cleaned.rename(columns=schema.get('original_names', {}))
 
     st.download_button(
-        label='Download Cleaned & Standardized CSV',
+        label='Download cleaned & standardized CSV',
         data=cleaned.to_csv(index=False).encode('utf-8'),
         file_name=f'standardized_{st.session_state["region_name"].split()[0].lower()}.csv',
         mime='text/csv',
@@ -1173,35 +1040,30 @@ def pg_standardization():
         for i, r in df_meta.iterrows():
             ch = []
             if r['_changed_name']:
-                ch.append(f'Name: {r["_orig_given"]} {r["_orig_family"]} → {r["given_name"]} {r["family_name"]}')
+                ch.append(f'Name: {r["_orig_given"]} {r["_orig_family"]} -> {r["given_name"]} {r["family_name"]}')
             if r['_changed_dob']:
-                ch.append(f'DOB: {r["_orig_dob"]} → {r["date_of_birth"]}')
+                ch.append(f'DOB: {r["_orig_dob"]} -> {r["date_of_birth"]}')
             if r['_changed_id']:
-                ch.append(f'ID: {r["_orig_id"]} → {r["emirates_id"]}')
+                ch.append(f'ID: {r["_orig_id"]} -> {r["emirates_id"]}')
             if r['_changed_gender']:
-                ch.append(f'Gender: {r["_orig_gender"]} → {r["gender"]}')
+                ch.append(f'Gender: {r["_orig_gender"]} -> {r["gender"]}')
             if r['_changed_nationality']:
-                ch.append(f'Nationality: {r["_orig_nationality"]} → {r["nationality"]}')
+                ch.append(f'Nationality: {r["_orig_nationality"]} -> {r["nationality"]}')
             if ch:
                 rows.append({'canonical_id': r.get('canonical_id', f'ROW_{i}'), 'Changes': ' | '.join(ch)})
         cdf = pd.DataFrame(rows)
         st.dataframe(cdf.head(200), use_container_width=True)
-        st.download_button(
-            label='Download Normalization Log (CSV)',
-            data=cdf.to_csv(index=False).encode('utf-8'),
-            file_name='normalization_log.csv', mime='text/csv',
-        )
+        st.download_button('Download normalization log (CSV)',
+                           data=cdf.to_csv(index=False).encode('utf-8'),
+                           file_name='normalization_log.csv', mime='text/csv')
 
 
-# ============================================================
-# Page: Configuration
-# ============================================================
 def pg_config():
     st.title('Configuration')
     st.caption('Region profile. Changes apply immediately across the app.')
 
     selected_region = st.selectbox(
-        'Region Profile',
+        'Region profile',
         list(REGION_PROFILES.keys()),
         index=list(REGION_PROFILES.keys()).index(st.session_state['region_name']),
         help='Swaps the ID format, required fields, DOB range, and trusted facility list.',
@@ -1221,91 +1083,53 @@ def pg_config():
     st.markdown(f'- Trusted facilities: {len(region["trusted_facilities"])}')
 
 
-# ============================================================
-# Page: About
-# ============================================================
 def pg_about():
     st.title('About')
 
     st.markdown('''
 ### What this tool does
 
-A pre-submission trust gate for patient records in a health information exchange.
-Every incoming record is scored across five identity dimensions and routed to
-one of four outcomes. It does not merge records, resolve collisions, or
-auto-correct data. It identifies problems, explains them, and hands control
-to a human.
+A pre-submission trust gate for patient records in a health information exchange. Every incoming record is scored across five identity dimensions and routed to one of four outcomes. It does not merge records, resolve collisions, or auto-correct data. It identifies problems, explains them, and hands control to a human.
 
 ### The five dimensions
 
 | Dimension | Weight | Check |
 |---|---|---|
 | Completeness | 0.20 | Required identity fields present |
-| Temporal Validity | 0.15 | Plausible date of birth |
-| Identity Consistency | 0.20 | ID format matches region standard |
+| Temporal validity | 0.15 | Plausible date of birth |
+| Identity consistency | 0.20 | ID format matches region standard |
 | Provenance | 0.15 | Trusted source facility |
-| Cross-Record Consistency | 0.30 | Collision with existing patient |
+| Cross-record consistency | 0.30 | Collision with existing patient |
 
 ### Module checks
 
-- **Coding Coherence** — ICD validity, ICD-CPT match, episode timeline, triage-cost anomaly
-- **DRG Readiness** — mandatory inputs for IR-DRG grouping
-- **MDS Completeness** — NABIDH/Malaffi minimum data set
-- **Consent Compliance** — granted / restricted / denied / withdrawn
-- **Prior-Authorization** — DHA/DOH pre-auth presence
+- **Coding coherence** — ICD validity, ICD-CPT match, episode timeline, triage-cost anomaly
+- **DRG readiness** — mandatory inputs for IR-DRG grouping
+- **MDS completeness** — NABIDH/Malaffi minimum data set
+- **Consent compliance** — granted / restricted / denied / withdrawn
+- **Prior authorization** — DHA/DOH pre-auth presence
 
 ### Scoring configuration notice
 
-This demo uses a revised scoring configuration, tuned separately from the
-published paper's validated configuration.
+This demo uses a revised scoring configuration, tuned separately from the published paper's validated configuration.
 
 - **Composite formula:** weighted sum × (0.4 + 0.6 × weakest dimension score)
 - **Auto-link threshold:** 0.75 (paper: 0.952)
 - **Quarantine threshold:** 0.45 (paper: 0.571)
 
-The revised values were tuned for realistic flag rates on messy data. A
-hospital pilot should re-derive both using the paper's methodology.
+The revised values were tuned for realistic flag rates on messy data. A hospital pilot should re-derive both using the paper's methodology.
 
 ### Deployment
 
 - **Batch path:** CSV upload for retrospective analysis and pre-pilot proof of concept.
-- **Real-time path:** FastAPI service (`app.py`) with `/assess-hl7` endpoint. Deployed as a Docker container inside hospital infrastructure. Reads HL7 v2 ADT messages directly from the interface engine.
+- **Real-time path:** FastAPI service (`app.py`) with a `/assess-hl7` endpoint. Deployed as a Docker container inside hospital infrastructure. Reads HL7 v2 ADT messages directly from the interface engine.
 
 No patient data leaves the hospital network in production.
 
 ### Privacy
 
-This demo uses synthetic data only. Do not upload real patient health
-information.
+This demo uses synthetic data only. Do not upload real patient health information.
     ''')
-
-
-# ============================================================
-# Page: Summary Report (printable)
-# ============================================================
-def pg_report():
-    st.title('Summary Report')
-    st.caption('A one-page report for the current batch, for data quality review and sign-off. Download it and print to PDF from your browser.')
-
-    result = st.session_state.get('assessment')
-    if result is None:
-        st.info('No batch loaded. Go to **Analyze → Batch Upload**.')
-        return
-
-    results_df, meta, df_meta, clinical_df, clinical_meta, drg_df, drg_meta, gov_df, gov_meta, schema = result
-    info = st.session_state.get('batch_info')
-    report_html = ui.build_report_html(info, st.session_state['region_name'], _get_config(),
-                                       results_df, schema, clinical_meta, drg_meta, gov_meta)
-
-    st.download_button(
-        label='Download report (HTML, print to PDF)',
-        data=report_html.encode('utf-8'),
-        file_name=f'data_quality_report_{datetime.now().strftime("%Y%m%d_%H%M")}.html',
-        mime='text/html',
-        type='primary',
-    )
-    import streamlit.components.v1 as components
-    components.html(report_html, height=1100, scrolling=True)
 
 
 # ============================================================
@@ -1336,7 +1160,6 @@ pages = {
     ],
 }
 
-# Sidebar branding
 with st.sidebar:
     ui.sidebar_brand(st.session_state['region_name'])
     ui.sidebar_note()
