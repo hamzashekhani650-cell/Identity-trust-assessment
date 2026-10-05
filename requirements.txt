@@ -7,3 +7,5 @@ scikit-learn
 tabulate
 reportlab
 openpyxl
+fastapi
+uvicorn
