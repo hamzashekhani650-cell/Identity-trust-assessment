@@ -39,7 +39,7 @@ from pathlib import Path
 # Add the current file's directory to the system path
 # This ensures the 'ui_theme' module can be found
 sys.path.append(str(Path(__file__).resolve().parent))
-
+from trust_layer import ui_theme as ui
 import ui_theme as ui
 import ui_theme as ui
 
