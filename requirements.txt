@@ -9,3 +9,4 @@ reportlab
 openpyxl
 fastapi
 uvicorn
+httpx
