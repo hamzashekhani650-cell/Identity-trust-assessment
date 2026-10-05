@@ -22,6 +22,7 @@ Navigation is via sidebar, organized by task:
 State is held in st.session_state so navigation between pages is instant.
 '''
 import io
+from datetime import datetime
 import os
 import re
 import streamlit as st
@@ -38,6 +39,7 @@ from trust_layer.mds_validators import check_mds_completeness
 from trust_layer.consent_validators import validate_consent
 from trust_layer.schema_mapper import map_columns, CANONICAL_FIELDS, detect_output_file
 from trust_layer.sample_generator import generate_sample
+import ui_theme as ui
 
 try:
     from trust_layer.prior_auth_validators import validate_preauth
@@ -51,10 +53,11 @@ except ImportError:
 # ============================================================
 st.set_page_config(
     page_title='Identity Trust Assessment',
-    page_icon='🏥',
+    page_icon=':material/health_and_safety:',
     layout='wide',
     initial_sidebar_state='expanded',
 )
+ui.inject_css()
 
 
 # ============================================================
@@ -129,6 +132,8 @@ if 'uploaded_name' not in st.session_state:
     st.session_state['uploaded_name'] = None
 if 'hl7_history' not in st.session_state:
     st.session_state['hl7_history'] = []
+if 'batch_info' not in st.session_state:
+    st.session_state['batch_info'] = None
 if 'hl7_validator' not in st.session_state:
     st.session_state['hl7_validator'] = None
 
@@ -222,20 +227,8 @@ def normalize_nationality(value):
     return NATIONALITY_CANON.get(key, s.title())
 
 
-def render_dimension_bar(label, score, color):
-    pct = int(score * 100)
-    html = f'''
-    <div style="margin-bottom: 12px;">
-        <div style="display: flex; justify-content: space-between; font-family: Helvetica, sans-serif; font-size: 14px; margin-bottom: 4px;">
-            <span style="font-weight: 600; color: #374151;">{label}</span>
-            <span style="color: #6B7280;">{score:.2f}</span>
-        </div>
-        <div style="background-color: #E5E7EB; border-radius: 6px; height: 12px; width: 100%; overflow: hidden;">
-            <div style="background-color: {color}; width: {pct}%; height: 100%; border-radius: 6px;"></div>
-        </div>
-    </div>
-    '''
-    st.markdown(html, unsafe_allow_html=True)
+def render_dimension_bar(label, score, color=None):
+    ui.dimension_bar(label, score)
 
 
 # ============================================================
@@ -599,6 +592,8 @@ def pg_dashboard():
 
     results_df, meta, df_meta, clinical_df, clinical_meta, drg_df, drg_meta, gov_df, gov_meta, schema = result
 
+    ui.batch_header(st.session_state.get('batch_info'), st.session_state['region_name'], results_df)
+
     c1, c2, c3, c4, c5 = st.columns(5)
     c1.metric('Total Records', len(results_df))
     c2.metric('Auto-Linked', len(results_df[results_df['decision'] == 'AUTO_LINK']))
@@ -613,28 +608,16 @@ def pg_dashboard():
         st.markdown('**Decision Breakdown**')
         dc = results_df['decision'].value_counts().reset_index()
         dc.columns = ['Decision', 'Count']
-        st.altair_chart(
-            alt.Chart(dc).mark_bar(color='#4A6FA5').encode(
-                x=alt.X('Count:Q', title='Records'),
-                y=alt.Y('Decision:N', sort='-x', title=''),
-                tooltip=['Decision', 'Count'],
-            ).properties(height=250),
-            use_container_width=True,
-        )
+        dc['Decision'] = dc['Decision'].map(lambda d: ui.DECISION_LABELS.get(d, d))
+        st.altair_chart(ui.decision_chart(dc, height=250), use_container_width=True)
     with col_b:
         st.markdown('**Facility Risk Profile**')
         fl = results_df[results_df['decision'].isin(['LINK_WITH_FLAG', 'QUARANTINE', 'INSUFFICIENT_DATA'])]
         if not fl.empty:
             fac = fl['source_facility'].replace('', '(unset)').value_counts().reset_index()
             fac.columns = ['Facility', 'Flagged Count']
-            st.altair_chart(
-                alt.Chart(fac).mark_bar(color='#C62828').encode(
-                    x=alt.X('Flagged Count:Q', title='Flagged Records'),
-                    y=alt.Y('Facility:N', sort='-x', title=''),
-                    tooltip=['Facility', 'Flagged Count'],
-                ).properties(height=250),
-                use_container_width=True,
-            )
+            st.altair_chart(ui.bar_chart(fac, 'Flagged Count', 'Facility', color=ui.BAD, height=250,
+                                         x_title='Flagged records'), use_container_width=True)
         else:
             st.info('No records were flagged.')
 
@@ -642,14 +625,8 @@ def pg_dashboard():
     dm = results_df[['dim_completeness', 'dim_temporal', 'dim_identity', 'dim_provenance', 'dim_cross_record']].mean().reset_index()
     dm.columns = ['Dimension', 'Average Score']
     dm['Dimension'] = ['Completeness', 'Temporal', 'Identity', 'Provenance', 'Cross-Record']
-    st.altair_chart(
-        alt.Chart(dm).mark_bar(color='#2E7D32').encode(
-            x=alt.X('Average Score:Q', scale=alt.Scale(domain=[0, 1])),
-            y=alt.Y('Dimension:N', sort='-x', title=''),
-            tooltip=['Dimension', 'Average Score'],
-        ).properties(height=220),
-        use_container_width=True,
-    )
+    st.altair_chart(ui.bar_chart(dm, 'Average Score', 'Dimension', color=ui.ACCENT, height=220,
+                                 domain=[0, 1]), use_container_width=True)
 
 
 # ============================================================
@@ -796,7 +773,7 @@ def pg_hl7():
 
             cc1, cc2 = st.columns(2)
             cc1.metric('Trust Score', f'{score:.3f}')
-            cc2.metric('Decision', decision)
+            cc2.metric('Decision', ui.DECISION_LABELS.get(decision, decision))
 
             if decision in ('LINK_WITH_FLAG', 'QUARANTINE'):
                 if dims['cross_record'] == 0.0:
@@ -855,6 +832,10 @@ def pg_batch():
     if st.session_state['uploaded_name'] != uploaded_file.name:
         st.session_state['assessment'] = None
         st.session_state['uploaded_name'] = uploaded_file.name
+        st.session_state['batch_info'] = {
+            'name': uploaded_file.name,
+            'processed_at': datetime.now().strftime('%d %b %Y, %H:%M'),
+        }
 
     with st.spinner('Running trust assessment...'):
         result = run_assessment(uploaded_file.getvalue(), st.session_state['region_name'])
@@ -869,10 +850,10 @@ def pg_batch():
     schema = result[9]
 
     if schema['looks_like_output']:
-        st.error('⚠️ This file appears to be a scored export from another system, not raw patient records. It contains output fields (Decision, MDS_Score, etc.) but no name columns.')
+        st.error('This file appears to be a scored export from another system, not raw patient records. It contains output fields (Decision, MDS_Score, etc.) but no name columns.')
 
     if schema['flag_rate'] >= 0.90 and schema['total_records'] > 20:
-        st.warning(f'⚠️ {schema["flag_rate"]*100:.0f}% of records were flagged ({schema["flagged_count"]} of {schema["total_records"]}). This usually means the file is missing critical identity columns.')
+        st.warning(f'{schema["flag_rate"]*100:.0f}% of records were flagged ({schema["flagged_count"]} of {schema["total_records"]}). This usually means the file is missing critical identity columns.')
 
     with st.expander('Schema Analysis', expanded=True):
         st.markdown(f'**Input:** {schema["input_columns"]} columns · **Mapped:** {schema["mapped"]} columns')
@@ -933,6 +914,7 @@ def pg_flagged():
 
     for _, row in to_render.iterrows():
         with st.expander(f'{row["canonical_id"]} · {row["given_name"] or "(no name)"} {row["family_name"]} · {row["decision"]}'):
+            st.markdown(ui.badge(row['decision']), unsafe_allow_html=True)
             st.code(row['canonical_id'], language=None)
             st.write(f'**Trust Score:** {row["trust_score"]}')
             st.write(f'**Primary Issue:** {row["primary_issue"]}')
@@ -986,14 +968,8 @@ def pg_coding():
             len(clinical_meta['duplicate_episodes']),
         ],
     })
-    st.altair_chart(
-        alt.Chart(issue_counts).mark_bar(color='#7E57C2').encode(
-            x=alt.X('Count:Q'),
-            y=alt.Y('Issue:N', sort='-x', title=''),
-            tooltip=['Issue', 'Count'],
-        ).properties(height=280),
-        use_container_width=True,
-    )
+    st.altair_chart(ui.bar_chart(issue_counts, 'Count', 'Issue', color=ui.ACCENT, height=240),
+                    use_container_width=True)
 
     problematic = clinical_df[
         (clinical_df['icd_exists'] < 1.0) | (clinical_df['icd_cpt_match'] == 0.0) |
@@ -1040,14 +1016,8 @@ def pg_drg():
         'Status': ['Fully Ready', 'Partial', 'Not Ready'],
         'Count': [drg_meta['fully_ready'], drg_meta['partial'], drg_meta['not_ready']],
     })
-    st.altair_chart(
-        alt.Chart(readiness_counts).mark_bar(color='#00897B').encode(
-            x=alt.X('Count:Q'),
-            y=alt.Y('Status:N', sort='-x', title=''),
-            tooltip=['Status', 'Count'],
-        ).properties(height=220),
-        use_container_width=True,
-    )
+    st.altair_chart(ui.bar_chart(readiness_counts, 'Count', 'Status', color=ui.ACCENT, height=180),
+                    use_container_width=True)
 
     missing_counter = {}
     for m in drg_df['missing_inputs']:
@@ -1060,14 +1030,8 @@ def pg_drg():
             for k, v in sorted(missing_counter.items(), key=lambda x: -x[1])
         ])
         st.markdown('**Most Common Missing Inputs**')
-        st.altair_chart(
-            alt.Chart(miss_df).mark_bar(color='#C62828').encode(
-                x=alt.X('Records Missing:Q'),
-                y=alt.Y('Field:N', sort='-x', title=''),
-                tooltip=['Field', 'Records Missing'],
-            ).properties(height=250),
-            use_container_width=True,
-        )
+        st.altair_chart(ui.bar_chart(miss_df, 'Records Missing', 'Field', color=ui.WARN, height=240),
+                        use_container_width=True)
 
     problematic_drg = drg_df[
         (drg_df['applicable'] == True) &
@@ -1121,14 +1085,8 @@ def pg_gov():
         ],
     })
     st.markdown('**MDS Completeness Distribution**')
-    st.altair_chart(
-        alt.Chart(mds_buckets).mark_bar(color='#5E35B1').encode(
-            x=alt.X('Count:Q'),
-            y=alt.Y('Bucket:N', sort='-x', title=''),
-            tooltip=['Bucket', 'Count'],
-        ).properties(height=220),
-        use_container_width=True,
-    )
+    st.altair_chart(ui.bar_chart(mds_buckets, 'Count', 'Bucket', color=ui.ACCENT, height=200),
+                    use_container_width=True)
 
     problematic_gov = gov_df[
         (gov_df['mds_score'] < 0.80) |
@@ -1240,7 +1198,7 @@ def pg_standardization():
 # ============================================================
 def pg_config():
     st.title('Configuration')
-    st.caption('Region profile and display settings. Changes apply immediately across the app.')
+    st.caption('Region profile. Changes apply immediately across the app.')
 
     selected_region = st.selectbox(
         'Region Profile',
@@ -1253,14 +1211,6 @@ def pg_config():
         st.session_state['assessment'] = None
         st.session_state['uploaded_name'] = None
         st.success(f'Region switched to {selected_region}. Reload your file to re-score.')
-
-    selected_color = st.selectbox(
-        'Bar Color',
-        list(COLOR_OPTIONS.keys()),
-        index=list(COLOR_OPTIONS.keys()).index(st.session_state['bar_color_name']),
-    )
-    if selected_color != st.session_state['bar_color_name']:
-        st.session_state['bar_color_name'] = selected_color
 
     st.divider()
     st.markdown('**Current region rules**')
@@ -1275,7 +1225,7 @@ def pg_config():
 # Page: About
 # ============================================================
 def pg_about():
-    st.title('About this demo')
+    st.title('About')
 
     st.markdown('''
 ### What this tool does
@@ -1331,36 +1281,65 @@ information.
 
 
 # ============================================================
+# Page: Summary Report (printable)
+# ============================================================
+def pg_report():
+    st.title('Summary Report')
+    st.caption('A one-page report for the current batch, for data quality review and sign-off. Download it and print to PDF from your browser.')
+
+    result = st.session_state.get('assessment')
+    if result is None:
+        st.info('No batch loaded. Go to **Analyze → Batch Upload**.')
+        return
+
+    results_df, meta, df_meta, clinical_df, clinical_meta, drg_df, drg_meta, gov_df, gov_meta, schema = result
+    info = st.session_state.get('batch_info')
+    report_html = ui.build_report_html(info, st.session_state['region_name'], _get_config(),
+                                       results_df, schema, clinical_meta, drg_meta, gov_meta)
+
+    st.download_button(
+        label='Download report (HTML, print to PDF)',
+        data=report_html.encode('utf-8'),
+        file_name=f'data_quality_report_{datetime.now().strftime("%Y%m%d_%H%M")}.html',
+        mime='text/html',
+        type='primary',
+    )
+    import streamlit.components.v1 as components
+    components.html(report_html, height=1100, scrolling=True)
+
+
+# ============================================================
 # Router
 # ============================================================
 pages = {
     'Overview': [
-        st.Page(pg_dashboard, title='Dashboard', icon='📊', default=True),
+        st.Page(pg_dashboard, title='Dashboard', icon=':material/dashboard:', default=True),
     ],
     'Analyze': [
-        st.Page(pg_hl7, title='HL7 Stream', icon='🔌'),
-        st.Page(pg_batch, title='Batch Upload', icon='📥'),
+        st.Page(pg_hl7, title='HL7 Stream', icon=':material/sensors:'),
+        st.Page(pg_batch, title='Batch Upload', icon=':material/upload_file:'),
     ],
     'Reports': [
-        st.Page(pg_flagged, title='Flagged Records', icon='🚩'),
-        st.Page(pg_coding, title='Coding Coherence', icon='🩺'),
-        st.Page(pg_drg, title='DRG Readiness', icon='💳'),
-        st.Page(pg_gov, title='Data Governance', icon='🔒'),
+        st.Page(pg_report, title='Summary Report', icon=':material/description:'),
+        st.Page(pg_flagged, title='Flagged Records', icon=':material/flag:'),
+        st.Page(pg_coding, title='Coding Coherence', icon=':material/stethoscope:'),
+        st.Page(pg_drg, title='DRG Readiness', icon=':material/request_quote:'),
+        st.Page(pg_gov, title='Data Governance', icon=':material/shield:'),
     ],
     'Compliance': [
-        st.Page(pg_audit, title='Audit Trail', icon='🧾'),
-        st.Page(pg_standardization, title='Standardization', icon='🧹'),
+        st.Page(pg_audit, title='Audit Trail', icon=':material/receipt_long:'),
+        st.Page(pg_standardization, title='Standardization', icon=':material/cleaning_services:'),
     ],
     'Settings': [
-        st.Page(pg_config, title='Configuration', icon='⚙️'),
-        st.Page(pg_about, title='About', icon='ℹ️'),
+        st.Page(pg_config, title='Configuration', icon=':material/settings:'),
+        st.Page(pg_about, title='About', icon=':material/info:'),
     ],
 }
 
 # Sidebar branding
 with st.sidebar:
-    st.markdown('### 🏥 Identity Trust')
-    st.caption(f'Region: {st.session_state["region_name"]}')
+    ui.sidebar_brand(st.session_state['region_name'])
+    ui.sidebar_note()
 
 pg = st.navigation(pages)
 pg.run()
