@@ -1,9 +1,33 @@
+'''
+Identity Trust Assessment — enterprise layout.
+
+Navigation is via sidebar, organized by task:
+  Overview
+    - Dashboard
+  Analyze
+    - HL7 Stream           (real-time message input — the production path)
+    - Batch Upload         (CSV — retrospective / pre-pilot path)
+  Reports
+    - Flagged Records
+    - Coding Coherence
+    - DRG Readiness
+    - Data Governance
+  Compliance
+    - Audit Trail
+    - Standardization
+  Settings
+    - Configuration
+    - About
+
+State is held in st.session_state so navigation between pages is instant.
+'''
 import io
 import os
 import re
 import streamlit as st
 import pandas as pd
 import altair as alt
+
 from trust_layer.scoring import compute_trust_score
 from trust_layer.router import route_decision_hard
 from trust_layer.validators import CrossRecordValidator
@@ -14,7 +38,6 @@ from trust_layer.mds_validators import check_mds_completeness
 from trust_layer.consent_validators import validate_consent
 from trust_layer.schema_mapper import map_columns, CANONICAL_FIELDS, detect_output_file
 from trust_layer.sample_generator import generate_sample
-from trust_layer.hl7_tab import render_hl7_tab
 
 try:
     from trust_layer.prior_auth_validators import validate_preauth
@@ -22,27 +45,21 @@ try:
 except ImportError:
     PA_AVAILABLE = False
 
-st.set_page_config(page_title='Identity Trust Assessment', layout='wide')
-st.title('Identity Trust Assessment')
-st.caption('Pre-submission record trust gate for patient identity resolution and claim readiness in HIEs')
 
-with st.expander('About this demo'):
-    st.markdown('''
-**Scoring configuration notice:**
+# ============================================================
+# Page config
+# ============================================================
+st.set_page_config(
+    page_title='Identity Trust Assessment',
+    page_icon='🏥',
+    layout='wide',
+    initial_sidebar_state='expanded',
+)
 
-This demo uses a revised scoring configuration, tuned separately from the published paper's validated configuration.
 
-- **Composite formula:** weighted sum x (0.4 + 0.6 x weakest dimension score)
-- **Auto-link threshold:** 0.75 (paper: 0.952)
-- **Quarantine threshold:** 0.45 (paper: 0.571)
-
-The revised values were tuned for realistic flag rates on messy real-world data. A hospital pilot should re-derive both using the paper's methodology.
-
-This tool accepts any CSV. It maps incoming column names to a canonical schema, normalizes formatting differences, and processes whatever identity, clinical, and governance fields are present. Missing fields are treated as blank, and any check that cannot run is marked "not available" without stopping the rest of the pipeline.
-
-For hospitals that send HL7 v2 messages directly, the HL7 Input tab accepts a raw ADT message, parses it, and scores it against the same five identity dimensions.
-    ''')
-
+# ============================================================
+# Constants
+# ============================================================
 AUDIT_LOG_PATH = '/tmp/audit_log.jsonl'
 
 COLOR_OPTIONS = {
@@ -98,21 +115,35 @@ REGION_PROFILES = {
     },
 }
 
-def render_dimension_bar(label, score, color):
-    pct = int(score * 100)
-    html = f'''
-    <div style="margin-bottom: 12px;">
-        <div style="display: flex; justify-content: space-between; font-family: Helvetica, sans-serif; font-size: 14px; margin-bottom: 4px;">
-            <span style="font-weight: 600; color: #374151;">{label}</span>
-            <span style="color: #6B7280;">{score:.2f}</span>
-        </div>
-        <div style="background-color: #E5E7EB; border-radius: 6px; height: 12px; width: 100%; overflow: hidden;">
-            <div style="background-color: {color}; width: {pct}%; height: 100%; border-radius: 6px;"></div>
-        </div>
-    </div>
-    '''
-    st.markdown(html, unsafe_allow_html=True)
 
+# ============================================================
+# Session state initialization
+# ============================================================
+if 'region_name' not in st.session_state:
+    st.session_state['region_name'] = 'UAE (DOH)'
+if 'bar_color_name' not in st.session_state:
+    st.session_state['bar_color_name'] = 'Blue'
+if 'assessment' not in st.session_state:
+    st.session_state['assessment'] = None
+if 'uploaded_name' not in st.session_state:
+    st.session_state['uploaded_name'] = None
+if 'hl7_history' not in st.session_state:
+    st.session_state['hl7_history'] = []
+if 'hl7_validator' not in st.session_state:
+    st.session_state['hl7_validator'] = None
+
+
+def _get_config():
+    return REGION_PROFILES[st.session_state['region_name']]
+
+
+def _get_color():
+    return COLOR_OPTIONS[st.session_state['bar_color_name']]
+
+
+# ============================================================
+# Normalization helpers
+# ============================================================
 def smart_title(s):
     words = s.split()
     out = []
@@ -124,6 +155,7 @@ def smart_title(s):
     t = ' '.join(out)
     t = re.sub(r"'S\b", "'s", t)
     return t
+
 
 def normalize_text(value):
     if pd.isna(value) or value is None:
@@ -141,6 +173,7 @@ def normalize_text(value):
         return ''
     return smart_title(s)
 
+
 def normalize_id(value):
     if pd.isna(value) or value is None:
         return None
@@ -149,6 +182,7 @@ def normalize_id(value):
         return None
     digits = ''.join(c for c in s if c.isdigit())
     return digits if digits else None
+
 
 def normalize_date(value):
     if pd.isna(value) or value is None:
@@ -168,6 +202,7 @@ def normalize_date(value):
     except Exception:
         return s
 
+
 def normalize_gender(value):
     if pd.isna(value) or value is None:
         return ''
@@ -175,6 +210,7 @@ def normalize_gender(value):
     if s == '' or s in ('nan', 'nat', 'none'):
         return ''
     return GENDER_CANON.get(s, str(value).strip().upper()[:1])
+
 
 def normalize_nationality(value):
     if pd.isna(value) or value is None:
@@ -185,6 +221,26 @@ def normalize_nationality(value):
     key = re.sub(r'[\s_\-\.]+', '', s.lower())
     return NATIONALITY_CANON.get(key, s.title())
 
+
+def render_dimension_bar(label, score, color):
+    pct = int(score * 100)
+    html = f'''
+    <div style="margin-bottom: 12px;">
+        <div style="display: flex; justify-content: space-between; font-family: Helvetica, sans-serif; font-size: 14px; margin-bottom: 4px;">
+            <span style="font-weight: 600; color: #374151;">{label}</span>
+            <span style="color: #6B7280;">{score:.2f}</span>
+        </div>
+        <div style="background-color: #E5E7EB; border-radius: 6px; height: 12px; width: 100%; overflow: hidden;">
+            <div style="background-color: {color}; width: {pct}%; height: 100%; border-radius: 6px;"></div>
+        </div>
+    </div>
+    '''
+    st.markdown(html, unsafe_allow_html=True)
+
+
+# ============================================================
+# Validators (region-aware)
+# ============================================================
 def validate_completeness_region(rec, config):
     fields = {
         'emirates_id': rec.emirates_id,
@@ -195,6 +251,7 @@ def validate_completeness_region(rec, config):
     req = config['required_fields']
     present = sum(1 for f in req if fields.get(f))
     return round(present / len(req), 2) if req else 1.0
+
 
 def validate_temporal_region(rec, config):
     if not rec.date_of_birth:
@@ -207,12 +264,14 @@ def validate_temporal_region(rec, config):
     except (ValueError, TypeError):
         return 0.0
 
+
 def validate_identity_region(rec, config):
     if not rec.emirates_id:
         return 0.0
     if re.match(config['id_pattern'], rec.emirates_id):
         return 1.0
     return 0.3
+
 
 def validate_provenance_region(rec, config):
     if not rec.source_facility:
@@ -221,11 +280,16 @@ def validate_provenance_region(rec, config):
         return 1.0
     return 0.7
 
+
 class Record:
     def __init__(self, **kwargs):
         for k, v in kwargs.items():
             setattr(self, k, v)
 
+
+# ============================================================
+# Assessment pipeline (cached)
+# ============================================================
 @st.cache_data(show_spinner='Running trust assessment...')
 def run_assessment(file_bytes, region_name):
     config = REGION_PROFILES[region_name]
@@ -374,7 +438,7 @@ def run_assessment(file_bytes, region_name):
     log_batch(
         audit_entries,
         log_path=AUDIT_LOG_PATH,
-        config_version='v0.6.0-demo',
+        config_version='v0.7.0-demo',
         thresholds={'low': 0.75, 'medium': 0.45},
     )
 
@@ -483,7 +547,6 @@ def run_assessment(file_bytes, region_name):
     }
 
     missing_canonical = [f for f in CANONICAL_FIELDS if f not in df.columns or (df[f].astype(str).str.strip() == '').all()]
-
     total_records = len(results_df)
     flagged_count = len(results_df[results_df['decision'].isin(['LINK_WITH_FLAG', 'QUARANTINE', 'INSUFFICIENT_DATA'])])
     flag_rate = flagged_count / total_records if total_records else 0.0
@@ -512,121 +575,70 @@ def run_assessment(file_bytes, region_name):
     }
     return results_df, meta, df, clinical_df, clinical_meta, drg_df, drg_meta, gov_df, gov_meta, schema_report
 
-with st.sidebar:
-    st.subheader('Configuration')
-    selected_region = st.selectbox(
-        'Region Profile',
-        list(REGION_PROFILES.keys()),
-        help='Swaps the ID format, required fields, DOB range, trusted facilities, and regulatory references.',
-    )
-    region = REGION_PROFILES[selected_region]
 
-    selected_color_name = st.selectbox('Bar Color', list(COLOR_OPTIONS.keys()))
-    selected_color = COLOR_OPTIONS[selected_color_name]
+# ============================================================
+# Page header helper
+# ============================================================
+def page_header(title, subtitle):
+    st.markdown(f'### {title}')
+    st.caption(subtitle)
+    st.divider()
 
-    st.warning('Privacy Notice: This demo uses synthetic data only. Do not upload real patient health information (PHI).')
 
-    st.markdown('**Generate a sample**')
-    if st.button(f'Generate {selected_region} Sample (100 records)', use_container_width=True):
-        st.session_state['sample_df'] = generate_sample(selected_region, n=100)
+# ============================================================
+# Page: Dashboard
+# ============================================================
+def pg_dashboard():
+    st.title('Dashboard')
+    st.caption('Batch overview. Upload a CSV from the Batch Upload page to populate this view.')
 
-    if 'sample_df' in st.session_state:
-        st.download_button(
-            label='📥 Download Generated Sample',
-            data=st.session_state['sample_df'].to_csv(index=False).encode('utf-8'),
-            file_name=f'sample_{selected_region.split()[0].lower()}_100.csv',
-            mime='text/csv',
-            use_container_width=True,
-        )
+    result = st.session_state.get('assessment')
+    if result is None:
+        st.info('No batch loaded yet. Go to **Analyze → Batch Upload** to load a CSV, or **Analyze → HL7 Stream** to score messages in real time.')
+        return
 
-    uploaded_file = st.file_uploader('Upload patient records (CSV)', type=['csv'])
+    results_df, meta, df_meta, clinical_df, clinical_meta, drg_df, drg_meta, gov_df, gov_meta, schema = result
 
-if uploaded_file is None:
-    st.info(f'Selected region: {selected_region}. Generate a sample or upload your own CSV to begin. Any CSV with patient records will work.')
-    st.stop()
-
-result = run_assessment(uploaded_file.getvalue(), selected_region)
-
-if result[0] is None:
-    st.error('The uploaded file has no columns. Please check the CSV and try again.')
-    st.stop()
-
-results_df, meta, df_meta, clinical_df, clinical_meta, drg_df, drg_meta, gov_df, gov_meta, schema = result
-
-if schema['looks_like_output']:
-    st.error('⚠️ This file appears to be a scored export from another system, not raw patient records. It contains output fields (Decision, MDS_Score, etc.) but no name columns. Upload the source records instead.')
-
-if schema['flag_rate'] >= 0.90 and schema['total_records'] > 20:
-    st.warning(f'⚠️ {schema["flag_rate"]*100:.0f}% of records were flagged ({schema["flagged_count"]} of {schema["total_records"]}). This usually means the file is missing critical identity columns. Check the Schema Analysis panel below.')
-
-with st.expander('📋 Schema Analysis', expanded=(schema['mapped'] < schema['input_columns'] or schema['flag_rate'] >= 0.90)):
-    st.markdown(f'**Input:** {schema["input_columns"]} columns · **Mapped to canonical schema:** {schema["mapped"]} columns')
-    if schema['inferred']:
-        st.markdown('**Auto-detected by content:**')
-        for item in schema['inferred']:
-            st.markdown(f"- `{item['column']}` → `{item['field']}` (confidence {item['confidence']:.2f})")
-    if schema['unresolved']:
-        st.markdown(f'**Unrecognized columns ({len(schema["unresolved"])}):** ' + ', '.join(f'`{c}`' for c in schema['unresolved']))
-    if schema['missing_canonical']:
-        core = [f for f in schema['missing_canonical'] if f in ('emirates_id', 'given_name', 'family_name', 'date_of_birth')]
-        if core:
-            st.markdown(f'**Core identity fields not present in this file:** ' + ', '.join(f'`{f}`' for f in core))
-        other = [f for f in schema['missing_canonical'] if f not in ('emirates_id', 'given_name', 'family_name', 'date_of_birth')]
-        if other:
-            st.caption('Other canonical fields not present: ' + ', '.join(f'`{f}`' for f in other))
-    st.markdown('---')
-    st.markdown('**Module availability for this file:**')
-    st.markdown(f"- Identity Trust: **available**")
-    st.markdown(f"- Coding Coherence: **{'available' if schema['coding_available'] else 'not available — no diagnosis_code or procedure_code column'}**")
-    st.markdown(f"- DRG Readiness: **{'available' if schema['drg_available'] else 'not available — no encounter_type column'}**")
-    st.markdown(f"- Consent Compliance: **{'available' if schema['consent_available'] else 'not available — no consent_status column'}**")
-    st.markdown(f"- Prior-Authorization: **{'available' if schema['pa_available'] else 'not available — no preauth_reference column'}**")
-
-tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8 = st.tabs([
-    'Executive Dashboard', 'Flagged Records',
-    'Batch Results', 'Coding Coherence',
-    'DRG Readiness', 'Data Governance',
-    'Audit Trail & Normalization', 'HL7 Input',
-])
-
-with tab1:
     c1, c2, c3, c4, c5 = st.columns(5)
     c1.metric('Total Records', len(results_df))
     c2.metric('Auto-Linked', len(results_df[results_df['decision'] == 'AUTO_LINK']))
     c3.metric('Flagged', len(results_df[results_df['decision'] == 'LINK_WITH_FLAG']))
     c4.metric('Quarantined', len(results_df[results_df['decision'] == 'QUARANTINE']))
     c5.metric('Insufficient Data', len(results_df[results_df['decision'] == 'INSUFFICIENT_DATA']))
+
     st.divider()
 
-    st.subheader('Decision Breakdown')
-    dc = results_df['decision'].value_counts().reset_index()
-    dc.columns = ['Decision', 'Count']
-    st.altair_chart(
-        alt.Chart(dc).mark_bar(color='#4A6FA5').encode(
-            x=alt.X('Count:Q', title='Records'),
-            y=alt.Y('Decision:N', sort='-x', title=''),
-            tooltip=['Decision', 'Count'],
-        ).properties(height=250),
-        use_container_width=True,
-    )
-
-    st.subheader('Facility Risk Profile')
-    fl = results_df[results_df['decision'].isin(['LINK_WITH_FLAG', 'QUARANTINE', 'INSUFFICIENT_DATA'])]
-    if not fl.empty:
-        fac = fl['source_facility'].replace('', '(unset)').value_counts().reset_index()
-        fac.columns = ['Facility', 'Flagged Count']
+    col_a, col_b = st.columns(2)
+    with col_a:
+        st.markdown('**Decision Breakdown**')
+        dc = results_df['decision'].value_counts().reset_index()
+        dc.columns = ['Decision', 'Count']
         st.altair_chart(
-            alt.Chart(fac).mark_bar(color='#C62828').encode(
-                x=alt.X('Flagged Count:Q', title='Flagged Records'),
-                y=alt.Y('Facility:N', sort='-x', title=''),
-                tooltip=['Facility', 'Flagged Count'],
-            ).properties(height=300),
+            alt.Chart(dc).mark_bar(color='#4A6FA5').encode(
+                x=alt.X('Count:Q', title='Records'),
+                y=alt.Y('Decision:N', sort='-x', title=''),
+                tooltip=['Decision', 'Count'],
+            ).properties(height=250),
             use_container_width=True,
         )
-    else:
-        st.info('No records were flagged in this batch.')
+    with col_b:
+        st.markdown('**Facility Risk Profile**')
+        fl = results_df[results_df['decision'].isin(['LINK_WITH_FLAG', 'QUARANTINE', 'INSUFFICIENT_DATA'])]
+        if not fl.empty:
+            fac = fl['source_facility'].replace('', '(unset)').value_counts().reset_index()
+            fac.columns = ['Facility', 'Flagged Count']
+            st.altair_chart(
+                alt.Chart(fac).mark_bar(color='#C62828').encode(
+                    x=alt.X('Flagged Count:Q', title='Flagged Records'),
+                    y=alt.Y('Facility:N', sort='-x', title=''),
+                    tooltip=['Facility', 'Flagged Count'],
+                ).properties(height=250),
+                use_container_width=True,
+            )
+        else:
+            st.info('No records were flagged.')
 
-    st.subheader('Dimension Scoring Averages')
+    st.markdown('**Dimension Scoring Averages**')
     dm = results_df[['dim_completeness', 'dim_temporal', 'dim_identity', 'dim_provenance', 'dim_cross_record']].mean().reset_index()
     dm.columns = ['Dimension', 'Average Score']
     dm['Dimension'] = ['Completeness', 'Temporal', 'Identity', 'Provenance', 'Cross-Record']
@@ -635,211 +647,470 @@ with tab1:
             x=alt.X('Average Score:Q', scale=alt.Scale(domain=[0, 1])),
             y=alt.Y('Dimension:N', sort='-x', title=''),
             tooltip=['Dimension', 'Average Score'],
-        ).properties(height=250),
+        ).properties(height=220),
         use_container_width=True,
     )
 
-with tab2:
-    flagged = results_df[results_df['decision'].isin(['LINK_WITH_FLAG', 'QUARANTINE', 'INSUFFICIENT_DATA'])].copy()
-    if flagged.empty:
-        st.success('All records processed cleanly. No flags raised.')
-    else:
-        pri = {'INSUFFICIENT_DATA': 0, 'QUARANTINE': 1, 'LINK_WITH_FLAG': 2}
-        flagged['_p'] = flagged['decision'].map(pri)
-        flagged = flagged.sort_values(['_p', 'trust_score']).drop(columns='_p')
 
-        st.subheader('Flagged Records for Manual Review')
-        st.warning(f'{len(flagged)} record(s) require manual review.')
+# ============================================================
+# Page: HL7 Stream
+# ============================================================
+def pg_hl7():
+    st.title('HL7 Stream')
+    st.caption('Paste one or more HL7 v2 ADT messages below. Each message is parsed, scored against the five identity dimensions, and routed. The session maintains a persistent validator, so a second message with the same identifier triggers a collision.')
 
-        fc1, fc2 = st.columns(2)
-        with fc1:
-            io_opt = sorted(flagged['primary_issue'].unique().tolist())
-            sel_issues = st.multiselect('Filter by issue type', options=io_opt, default=io_opt)
-        with fc2:
-            d_opt = sorted(flagged['decision'].unique().tolist())
-            sel_dec = st.multiselect('Filter by decision', options=d_opt, default=d_opt)
+    st.info('In production, messages arrive continuously from the hospital interface engine via the FastAPI endpoint (`/assess-hl7`). This page demonstrates the same parser and scoring logic on pasted input.')
 
-        filtered = flagged[flagged['primary_issue'].isin(sel_issues) & flagged['decision'].isin(sel_dec)]
-        st.caption(f'Showing {len(filtered)} of {len(flagged)} flagged records.')
-
-        with st.expander('Bulk Actions'):
-            st.markdown('**Copy all filtered record IDs:**')
-            st.code('\n'.join(filtered['canonical_id'].astype(str).tolist()), language=None)
-
-        st.divider()
-
-        STEP = 100
-        if 'show_count' not in st.session_state:
-            st.session_state.show_count = STEP
-
-        to_render = filtered.head(st.session_state.show_count)
-        st.caption(f'Rendering {len(to_render)} of {len(filtered)} filtered records.')
-
-        for _, row in to_render.iterrows():
-            with st.expander(f'{row["canonical_id"]} - {row["given_name"] or "(no name)"} {row["family_name"]} ({row["decision"]})'):
-                st.markdown('**Record ID (click the copy icon):**')
-                st.code(row['canonical_id'], language=None)
-                st.write(f'**Trust Score:** {row["trust_score"]}')
-                st.write(f'**Primary Issue:** {row["primary_issue"]}')
-                st.info(f'**Forensic Detail:** {row["explanation"]}')
-                st.write('**Dimension Scores:**')
-                for lbl, col in [('Completeness', 'dim_completeness'), ('Temporal', 'dim_temporal'),
-                                 ('Identity', 'dim_identity'), ('Provenance', 'dim_provenance'),
-                                 ('Cross-Record', 'dim_cross_record')]:
-                    render_dimension_bar(lbl, row[col], selected_color)
-
-        if len(filtered) > st.session_state.show_count:
-            if st.button('Load more records'):
-                st.session_state.show_count += STEP
-                st.rerun()
-
-        st.download_button(
-            label='Download Filtered Flagged Records (CSV)',
-            data=filtered.to_csv(index=False).encode('utf-8'),
-            file_name='flagged_identity_records.csv', mime='text/csv',
-        )
-
-with tab3:
-    st.subheader('Batch Results')
-    if len(results_df) > 500:
-        st.caption(f'Showing first 500 of {len(results_df)} records.')
-        st.markdown(results_df.head(500)[['canonical_id', 'given_name', 'family_name', 'trust_score', 'decision', 'primary_issue']].to_markdown(index=False))
-    else:
-        st.markdown(results_df[['canonical_id', 'given_name', 'family_name', 'trust_score', 'decision', 'primary_issue']].to_markdown(index=False))
-    st.download_button(
-        label='Download Full Scored Batch (CSV)',
-        data=results_df.to_csv(index=False).encode('utf-8'),
-        file_name='full_scored_batch.csv', mime='text/csv',
+    default_msg = (
+        'MSH|^~\\&|HIS|CLEVELAND CLINIC ABU DHABI|MALAFFI|DOH|20240110120000||ADT^A04|MSG0001|P|2.5\r'
+        'EVN|A04|20240110120000\r'
+        'PID|1||784-1985-1234567-1^^^DOH^MR||Al-Mansoori^Ahmed||19850315|M\r'
+        'PV1|1|O'
     )
 
-with tab4:
-    st.subheader('Coding & Episode Coherence')
-    if not clinical_meta.get('available'):
-        st.info('This check could not run because the uploaded file has no populated `diagnosis_code` or `procedure_code` column. The rest of the demo works normally.')
-    else:
-        cc1, cc2, cc3, cc4 = st.columns(4)
-        cc1.metric('ICD Issues', clinical_meta['icd_issues'])
-        cc2.metric('ICD-CPT Mismatches', clinical_meta['icd_cpt_mismatches'])
-        cc3.metric('Timeline Errors', clinical_meta['timeline_errors'])
-        cc4.metric('Triage-Cost Anomalies', clinical_meta['triage_anomalies'])
-        st.divider()
-        issue_counts = pd.DataFrame({
-            'Issue': ['ICD Issues', 'ICD-CPT Mismatches', 'Timeline Errors', 'Triage-Cost Anomalies', 'Duplicate Episodes'],
-            'Count': [
-                clinical_meta['icd_issues'], clinical_meta['icd_cpt_mismatches'],
-                clinical_meta['timeline_errors'], clinical_meta['triage_anomalies'],
-                len(clinical_meta['duplicate_episodes']),
-            ],
-        })
-        st.altair_chart(
-            alt.Chart(issue_counts).mark_bar(color='#7E57C2').encode(
-                x=alt.X('Count:Q', title='Number of Records'),
-                y=alt.Y('Issue:N', sort='-x', title=''),
-                tooltip=['Issue', 'Count'],
-            ).properties(height=280),
-            use_container_width=True,
-        )
-        st.metric('Mean Clinical Coherence Score', f'{clinical_meta["mean_coherence"]:.3f}')
-        st.divider()
-        st.subheader('Records with Coding Issues')
-        problematic = clinical_df[
-            (clinical_df['icd_exists'] < 1.0) | (clinical_df['icd_cpt_match'] == 0.0) |
-            (clinical_df['episode_timeline'] == 0.0) | (clinical_df['triage_cost'] == 0.0) |
-            (clinical_df['admission_after_dob'] == 0.0)
-        ].copy()
-        if problematic.empty:
-            st.success('No coding or episode coherence issues detected.')
-        else:
-            st.caption(f'{len(problematic)} record(s) with at least one coding coherence issue.')
-            display_cols = ['canonical_id', 'given_name', 'family_name', 'diagnosis_code',
-                            'procedure_code', 'admission_date', 'discharge_date',
-                            'triage_level', 'total_cost_aed', 'clinical_coherence_score']
-            display_cols = [c for c in display_cols if c in problematic.columns]
-            st.dataframe(problematic[display_cols], use_container_width=True)
-            st.download_button(
-                label='Download Coding Coherence Report (CSV)',
-                data=problematic.to_csv(index=False).encode('utf-8'),
-                file_name='coding_coherence_report.csv', mime='text/csv',
+    col_a, col_b = st.columns([3, 1])
+    with col_b:
+        if st.button('Reset session validator', use_container_width=True):
+            st.session_state['hl7_history'] = []
+            st.success('Session cleared.')
+
+    hl7_input = st.text_area(
+        'HL7 v2 message(s). Separate multiple messages with a blank line.',
+        value=default_msg,
+        height=220,
+    )
+
+    if st.button('Parse and assess', type='primary'):
+        # Split on blank lines to support multiple messages
+        raw_msgs = [m.strip() for m in re.split(r'\n\s*\n', hl7_input) if m.strip()]
+        if not raw_msgs:
+            st.error('No message found.')
+            return
+
+        config = _get_config()
+        color = _get_color()
+
+        # Build a local validator per session if not present
+        if st.session_state['hl7_validator'] is None:
+            class _V:
+                def __init__(self):
+                    self.identifier_index = {}
+                    self.name_dob_index = {}
+                def add_record(self, r):
+                    if getattr(r, 'emirates_id', None):
+                        self.identifier_index.setdefault(r.emirates_id, set()).add(r.canonical_id)
+                    key = (
+                        (getattr(r, 'given_name', '') or '').strip().lower(),
+                        (getattr(r, 'family_name', '') or '').strip().lower(),
+                        getattr(r, 'date_of_birth', '') or '',
+                    )
+                    if key != ('', '', ''):
+                        self.name_dob_index.setdefault(key, set()).add(r.canonical_id)
+                def validate(self, r):
+                    eid = getattr(r, 'emirates_id', None)
+                    if eid and eid in self.identifier_index:
+                        if r.canonical_id not in self.identifier_index[eid]:
+                            return 0.0
+                    key = (
+                        (getattr(r, 'given_name', '') or '').strip().lower(),
+                        (getattr(r, 'family_name', '') or '').strip().lower(),
+                        getattr(r, 'date_of_birth', '') or '',
+                    )
+                    if key != ('', '', '') and key in self.name_dob_index:
+                        if r.canonical_id not in self.name_dob_index[key]:
+                            return 0.5
+                    return 1.0
+            st.session_state['hl7_validator'] = _V()
+
+        validator = st.session_state['hl7_validator']
+
+        from trust_layer.hl7_ingest import parse_hl7_message, validate_hl7_structure
+
+        for i, msg in enumerate(raw_msgs):
+            st.markdown(f'---')
+            st.markdown(f'### Message {i + 1}')
+
+            ok, issues = validate_hl7_structure(msg)
+            if not ok:
+                st.error(f'Invalid HL7 structure: {"; ".join(issues)}')
+                continue
+
+            parsed = parse_hl7_message(msg)
+
+            with st.expander('Parsed fields', expanded=False):
+                for label, value in [
+                    ('Emirates ID', parsed.get('emirates_id')),
+                    ('Given Name', parsed.get('given_name')),
+                    ('Family Name', parsed.get('family_name')),
+                    ('Gender', parsed.get('gender')),
+                    ('Date of Birth', parsed.get('date_of_birth')),
+                    ('Source Facility', parsed.get('source_facility')),
+                    ('Canonical ID', parsed.get('canonical_id')),
+                    ('Encounter Type', parsed.get('encounter_type')),
+                ]:
+                    st.markdown(f'- **{label}:** {value if value else "_(empty)_"}')
+
+            rec = Record(
+                emirates_id=normalize_id(parsed.get('emirates_id')),
+                given_name=normalize_text(parsed.get('given_name')),
+                family_name=normalize_text(parsed.get('family_name')),
+                date_of_birth=str(parsed.get('date_of_birth', '')).strip()[:10],
+                nationality=normalize_nationality(parsed.get('nationality')),
+                source_facility=normalize_text(parsed.get('source_facility')),
+                canonical_id=parsed.get('canonical_id') or f'MSG_{i+1}',
             )
-        if clinical_meta['duplicate_episodes']:
+
+            required = config['required_fields']
+            present = sum(1 for f in required if getattr(rec, f, None))
+            completeness = round(present / len(required), 2) if required else 1.0
+
+            try:
+                year = int(rec.date_of_birth[:4])
+                temporal = 1.0 if 1900 <= year <= 2025 else 0.3
+            except (ValueError, TypeError):
+                temporal = 0.0
+
+            if not rec.emirates_id:
+                identity = 0.0
+            elif re.match(config['id_pattern'], rec.emirates_id):
+                identity = 1.0
+            else:
+                identity = 0.3
+
+            if not rec.source_facility:
+                provenance = 0.0
+            elif rec.source_facility in config['trusted_facilities']:
+                provenance = 1.0
+            else:
+                provenance = 0.7
+
+            dims = {
+                'completeness': completeness,
+                'temporal': temporal,
+                'identity': identity,
+                'provenance': provenance,
+                'cross_record': validator.validate(rec),
+            }
+            score = compute_trust_score(**dims)
+            decision = route_decision_hard(score, dims['cross_record'])
+
+            cc1, cc2 = st.columns(2)
+            cc1.metric('Trust Score', f'{score:.3f}')
+            cc2.metric('Decision', decision)
+
+            if decision in ('LINK_WITH_FLAG', 'QUARANTINE'):
+                if dims['cross_record'] == 0.0:
+                    st.error(f'Identifier collision: {config["id_label"]} is already registered to a different patient.')
+                else:
+                    st.warning(f'Routed for review. Weakest dimension: {min(dims, key=dims.get)}.')
+
+            with st.expander('Dimension scores'):
+                for label, key in [('Completeness', 'completeness'), ('Temporal', 'temporal'),
+                                   ('Identity', 'identity'), ('Provenance', 'provenance'),
+                                   ('Cross-Record', 'cross_record')]:
+                    render_dimension_bar(label, dims[key], color)
+
+            validator.add_record(rec)
+            st.session_state['hl7_history'].append({
+                'msg_index': i + 1,
+                'canonical_id': rec.canonical_id,
+                'emirates_id': rec.emirates_id,
+                'name': f'{rec.given_name} {rec.family_name}',
+                'decision': decision,
+                'trust_score': round(score, 3),
+            })
+
+        if st.session_state['hl7_history']:
             st.divider()
-            st.subheader('Duplicate Episodes')
-            dup_rows = [{'episode_id': ep, 'claimed_by': ', '.join(ids)} for ep, ids in clinical_meta['duplicate_episodes'].items()]
-            st.dataframe(pd.DataFrame(dup_rows), use_container_width=True)
+            st.markdown('### Session History')
+            st.dataframe(pd.DataFrame(st.session_state['hl7_history']), use_container_width=True)
 
-with tab5:
-    st.subheader('DRG Readiness')
-    if not drg_meta.get('available'):
-        st.info('This check could not run because the uploaded file has no populated `encounter_type` column. The rest of the demo works normally.')
+
+# ============================================================
+# Page: Batch Upload (CSV)
+# ============================================================
+def pg_batch():
+    st.title('Batch Upload')
+    st.caption('Upload a CSV of patient records. The schema mapper handles arbitrary column names, and the pipeline processes whatever identity, clinical, and governance fields are present.')
+
+    st.markdown('**Generate a sample**')
+    col_a, col_b = st.columns([1, 1])
+    with col_a:
+        if st.button(f'Generate {st.session_state["region_name"]} Sample (100 records)'):
+            sample_df = generate_sample(st.session_state['region_name'], n=100)
+            st.download_button(
+                label='Download Generated Sample',
+                data=sample_df.to_csv(index=False).encode('utf-8'),
+                file_name=f'sample_{st.session_state["region_name"].split()[0].lower()}_100.csv',
+                mime='text/csv',
+            )
+
+    st.divider()
+    st.markdown('**Upload your own**')
+    uploaded_file = st.file_uploader('CSV file', type=['csv'])
+
+    if uploaded_file is None:
+        return
+
+    if st.session_state['uploaded_name'] != uploaded_file.name:
+        st.session_state['assessment'] = None
+        st.session_state['uploaded_name'] = uploaded_file.name
+
+    with st.spinner('Running trust assessment...'):
+        result = run_assessment(uploaded_file.getvalue(), st.session_state['region_name'])
+
+    if result[0] is None:
+        st.error('The uploaded file has no columns.')
+        return
+
+    st.session_state['assessment'] = result
+    st.success(f'Processed. Open **Dashboard** or **Reports** in the sidebar to view results.')
+
+    schema = result[9]
+
+    if schema['looks_like_output']:
+        st.error('⚠️ This file appears to be a scored export from another system, not raw patient records. It contains output fields (Decision, MDS_Score, etc.) but no name columns.')
+
+    if schema['flag_rate'] >= 0.90 and schema['total_records'] > 20:
+        st.warning(f'⚠️ {schema["flag_rate"]*100:.0f}% of records were flagged ({schema["flagged_count"]} of {schema["total_records"]}). This usually means the file is missing critical identity columns.')
+
+    with st.expander('Schema Analysis', expanded=True):
+        st.markdown(f'**Input:** {schema["input_columns"]} columns · **Mapped:** {schema["mapped"]} columns')
+        if schema['inferred']:
+            st.markdown('**Auto-detected by content:**')
+            for item in schema['inferred']:
+                st.markdown(f"- `{item['column']}` → `{item['field']}`")
+        if schema['unresolved']:
+            st.markdown(f'**Unrecognized columns:** ' + ', '.join(f'`{c}`' for c in schema['unresolved']))
+        if schema['missing_canonical']:
+            core = [f for f in schema['missing_canonical'] if f in ('emirates_id', 'given_name', 'family_name', 'date_of_birth')]
+            if core:
+                st.markdown(f'**Core identity fields missing:** ' + ', '.join(f'`{f}`' for f in core))
+
+
+# ============================================================
+# Page: Flagged Records
+# ============================================================
+def pg_flagged():
+    st.title('Flagged Records')
+    st.caption('Records routed for manual review.')
+
+    result = st.session_state.get('assessment')
+    if result is None:
+        st.info('No batch loaded. Go to **Analyze → Batch Upload**.')
+        return
+
+    results_df, meta, df_meta, clinical_df, clinical_meta, drg_df, drg_meta, gov_df, gov_meta, schema = result
+    color = _get_color()
+
+    flagged = results_df[results_df['decision'].isin(['LINK_WITH_FLAG', 'QUARANTINE', 'INSUFFICIENT_DATA'])].copy()
+    if flagged.empty:
+        st.success('No flagged records.')
+        return
+
+    pri = {'INSUFFICIENT_DATA': 0, 'QUARANTINE': 1, 'LINK_WITH_FLAG': 2}
+    flagged['_p'] = flagged['decision'].map(pri)
+    flagged = flagged.sort_values(['_p', 'trust_score']).drop(columns='_p')
+
+    fc1, fc2 = st.columns(2)
+    with fc1:
+        io_opt = sorted(flagged['primary_issue'].unique().tolist())
+        sel_issues = st.multiselect('Issue type', options=io_opt, default=io_opt)
+    with fc2:
+        d_opt = sorted(flagged['decision'].unique().tolist())
+        sel_dec = st.multiselect('Decision', options=d_opt, default=d_opt)
+
+    filtered = flagged[flagged['primary_issue'].isin(sel_issues) & flagged['decision'].isin(sel_dec)]
+    st.caption(f'Showing {len(filtered)} of {len(flagged)} records.')
+
+    with st.expander('Bulk Actions'):
+        st.code('\n'.join(filtered['canonical_id'].astype(str).tolist()), language=None)
+
+    STEP = 100
+    if 'show_count' not in st.session_state:
+        st.session_state.show_count = STEP
+    to_render = filtered.head(st.session_state.show_count)
+
+    for _, row in to_render.iterrows():
+        with st.expander(f'{row["canonical_id"]} · {row["given_name"] or "(no name)"} {row["family_name"]} · {row["decision"]}'):
+            st.code(row['canonical_id'], language=None)
+            st.write(f'**Trust Score:** {row["trust_score"]}')
+            st.write(f'**Primary Issue:** {row["primary_issue"]}')
+            st.info(f'{row["explanation"]}')
+            for lbl, col in [('Completeness', 'dim_completeness'), ('Temporal', 'dim_temporal'),
+                             ('Identity', 'dim_identity'), ('Provenance', 'dim_provenance'),
+                             ('Cross-Record', 'dim_cross_record')]:
+                render_dimension_bar(lbl, row[col], color)
+
+    if len(filtered) > st.session_state.show_count:
+        if st.button('Load more'):
+            st.session_state.show_count += STEP
+            st.rerun()
+
+    st.download_button(
+        label='Download Filtered Records (CSV)',
+        data=filtered.to_csv(index=False).encode('utf-8'),
+        file_name='flagged_records.csv', mime='text/csv',
+    )
+
+
+# ============================================================
+# Page: Coding Coherence
+# ============================================================
+def pg_coding():
+    st.title('Coding Coherence')
+    st.caption('Rule-based checks on diagnosis codes, procedure codes, and episode timelines.')
+
+    result = st.session_state.get('assessment')
+    if result is None:
+        st.info('No batch loaded. Go to **Analyze → Batch Upload**.')
+        return
+
+    results_df, meta, df_meta, clinical_df, clinical_meta, drg_df, drg_meta, gov_df, gov_meta, schema = result
+
+    if not clinical_meta.get('available'):
+        st.info('This check could not run — the uploaded file has no populated `diagnosis_code` or `procedure_code` column.')
+        return
+
+    cc1, cc2, cc3, cc4 = st.columns(4)
+    cc1.metric('ICD Issues', clinical_meta['icd_issues'])
+    cc2.metric('ICD-CPT Mismatches', clinical_meta['icd_cpt_mismatches'])
+    cc3.metric('Timeline Errors', clinical_meta['timeline_errors'])
+    cc4.metric('Triage-Cost Anomalies', clinical_meta['triage_anomalies'])
+
+    issue_counts = pd.DataFrame({
+        'Issue': ['ICD Issues', 'ICD-CPT Mismatches', 'Timeline Errors', 'Triage-Cost Anomalies', 'Duplicate Episodes'],
+        'Count': [
+            clinical_meta['icd_issues'], clinical_meta['icd_cpt_mismatches'],
+            clinical_meta['timeline_errors'], clinical_meta['triage_anomalies'],
+            len(clinical_meta['duplicate_episodes']),
+        ],
+    })
+    st.altair_chart(
+        alt.Chart(issue_counts).mark_bar(color='#7E57C2').encode(
+            x=alt.X('Count:Q'),
+            y=alt.Y('Issue:N', sort='-x', title=''),
+            tooltip=['Issue', 'Count'],
+        ).properties(height=280),
+        use_container_width=True,
+    )
+
+    problematic = clinical_df[
+        (clinical_df['icd_exists'] < 1.0) | (clinical_df['icd_cpt_match'] == 0.0) |
+        (clinical_df['episode_timeline'] == 0.0) | (clinical_df['triage_cost'] == 0.0) |
+        (clinical_df['admission_after_dob'] == 0.0)
+    ].copy()
+
+    if problematic.empty:
+        st.success('No coding issues detected.')
     else:
-        d1, d2, d3, d4 = st.columns(4)
-        d1.metric('Inpatient Records', drg_meta['inpatient_count'])
-        d2.metric('Fully Ready', drg_meta['fully_ready'])
-        d3.metric('Partial', drg_meta['partial'])
-        d4.metric('Not Ready', drg_meta['not_ready'])
-        st.divider()
-        st.metric('Mean DRG Readiness', f'{drg_meta["mean_readiness"]:.3f}')
-        readiness_counts = pd.DataFrame({
-            'Status': ['Fully Ready', 'Partial', 'Not Ready'],
-            'Count': [drg_meta['fully_ready'], drg_meta['partial'], drg_meta['not_ready']],
-        })
+        st.dataframe(problematic, use_container_width=True)
+        st.download_button(
+            label='Download Coding Coherence Report (CSV)',
+            data=problematic.to_csv(index=False).encode('utf-8'),
+            file_name='coding_coherence_report.csv', mime='text/csv',
+        )
+
+
+# ============================================================
+# Page: DRG Readiness
+# ============================================================
+def pg_drg():
+    st.title('DRG Readiness')
+    st.caption('Validates whether inpatient records have every input the IR-DRG grouper needs.')
+
+    result = st.session_state.get('assessment')
+    if result is None:
+        st.info('No batch loaded. Go to **Analyze → Batch Upload**.')
+        return
+
+    results_df, meta, df_meta, clinical_df, clinical_meta, drg_df, drg_meta, gov_df, gov_meta, schema = result
+
+    if not drg_meta.get('available'):
+        st.info('This check could not run — the uploaded file has no populated `encounter_type` column.')
+        return
+
+    d1, d2, d3, d4 = st.columns(4)
+    d1.metric('Inpatient Records', drg_meta['inpatient_count'])
+    d2.metric('Fully Ready', drg_meta['fully_ready'])
+    d3.metric('Partial', drg_meta['partial'])
+    d4.metric('Not Ready', drg_meta['not_ready'])
+
+    readiness_counts = pd.DataFrame({
+        'Status': ['Fully Ready', 'Partial', 'Not Ready'],
+        'Count': [drg_meta['fully_ready'], drg_meta['partial'], drg_meta['not_ready']],
+    })
+    st.altair_chart(
+        alt.Chart(readiness_counts).mark_bar(color='#00897B').encode(
+            x=alt.X('Count:Q'),
+            y=alt.Y('Status:N', sort='-x', title=''),
+            tooltip=['Status', 'Count'],
+        ).properties(height=220),
+        use_container_width=True,
+    )
+
+    missing_counter = {}
+    for m in drg_df['missing_inputs']:
+        if m:
+            for field in m.split(', '):
+                missing_counter[field] = missing_counter.get(field, 0) + 1
+    if missing_counter:
+        miss_df = pd.DataFrame([
+            {'Field': k, 'Records Missing': v}
+            for k, v in sorted(missing_counter.items(), key=lambda x: -x[1])
+        ])
+        st.markdown('**Most Common Missing Inputs**')
         st.altair_chart(
-            alt.Chart(readiness_counts).mark_bar(color='#00897B').encode(
-                x=alt.X('Count:Q', title='Records'),
-                y=alt.Y('Status:N', sort='-x', title=''),
-                tooltip=['Status', 'Count'],
-            ).properties(height=220),
+            alt.Chart(miss_df).mark_bar(color='#C62828').encode(
+                x=alt.X('Records Missing:Q'),
+                y=alt.Y('Field:N', sort='-x', title=''),
+                tooltip=['Field', 'Records Missing'],
+            ).properties(height=250),
             use_container_width=True,
         )
-        st.divider()
-        st.subheader('Most Common Missing Inputs')
-        missing_counter = {}
-        for m in drg_df['missing_inputs']:
-            if m:
-                for field in m.split(', '):
-                    missing_counter[field] = missing_counter.get(field, 0) + 1
-        if missing_counter:
-            miss_df = pd.DataFrame([
-                {'Field': k, 'Records Missing': v}
-                for k, v in sorted(missing_counter.items(), key=lambda x: -x[1])
-            ])
-            st.altair_chart(
-                alt.Chart(miss_df).mark_bar(color='#C62828').encode(
-                    x=alt.X('Records Missing:Q'),
-                    y=alt.Y('Field:N', sort='-x', title=''),
-                    tooltip=['Field', 'Records Missing'],
-                ).properties(height=250),
-                use_container_width=True,
-            )
-        st.divider()
-        st.subheader('Inpatient Records with DRG Issues')
-        problematic_drg = drg_df[
-            (drg_df['applicable'] == True) &
-            ((drg_df['drg_readiness_score'] < 1.0) | (drg_df['issues'] != ''))
-        ].copy()
-        if problematic_drg.empty:
-            st.success('All inpatient records are fully DRG-ready.')
-        else:
-            st.caption(f'{len(problematic_drg)} inpatient record(s) with at least one issue.')
-            display_cols = ['canonical_id', 'given_name', 'family_name', 'encounter_type',
-                            'drg_readiness_score', 'missing_inputs', 'issues']
-            display_cols = [c for c in display_cols if c in problematic_drg.columns]
-            st.dataframe(problematic_drg[display_cols], use_container_width=True)
-            st.download_button(
-                label='Download DRG Readiness Report (CSV)',
-                data=problematic_drg.to_csv(index=False).encode('utf-8'),
-                file_name='drg_readiness_report.csv', mime='text/csv',
-            )
 
-with tab6:
-    st.subheader('Data Governance')
+    problematic_drg = drg_df[
+        (drg_df['applicable'] == True) &
+        ((drg_df['drg_readiness_score'] < 1.0) | (drg_df['issues'] != ''))
+    ].copy()
+
+    if not problematic_drg.empty:
+        st.dataframe(problematic_drg, use_container_width=True)
+        st.download_button(
+            label='Download DRG Readiness Report (CSV)',
+            data=problematic_drg.to_csv(index=False).encode('utf-8'),
+            file_name='drg_readiness_report.csv', mime='text/csv',
+        )
+
+
+# ============================================================
+# Page: Data Governance
+# ============================================================
+def pg_gov():
+    st.title('Data Governance')
+    st.caption('Minimum Data Set completeness, consent compliance, and prior-authorization.')
+
+    result = st.session_state.get('assessment')
+    if result is None:
+        st.info('No batch loaded. Go to **Analyze → Batch Upload**.')
+        return
+
+    results_df, meta, df_meta, clinical_df, clinical_meta, drg_df, drg_meta, gov_df, gov_meta, schema = result
+
     g1, g2, g3, g4 = st.columns(4)
     g1.metric('Mean MDS Score', f'{gov_meta["mean_mds"]:.3f}')
     g2.metric('Below 80% MDS', gov_meta['below_80'])
     g3.metric('Consent Blocked', gov_meta['consent_blocked'] if gov_meta['consent_available'] else 'N/A')
     g4.metric('Consent Missing', gov_meta['consent_missing'] if gov_meta['consent_available'] else 'N/A')
+
+    if gov_meta['consent_available'] and gov_meta['consent_blocked'] > 0:
+        st.error(f'{gov_meta["consent_blocked"]} record(s) have denied or withdrawn consent — these must not be shared without further review.')
+
+    if gov_meta['pa_available'] and gov_meta['pa_missing'] > 0:
+        st.error(f'{gov_meta["pa_missing"]} claim(s) will be rejected: procedure requires pre-authorization but no PA reference is on file.')
+
     st.divider()
-    st.subheader('MDS Completeness Distribution')
+
     mds_buckets = pd.DataFrame({
         'Bucket': ['Perfect (1.0)', 'Good (0.8-0.99)', 'Partial (0.6-0.79)', 'Poor (<0.6)'],
         'Count': [
@@ -849,93 +1120,46 @@ with tab6:
             int((gov_df['mds_score'] < 0.60).sum()),
         ],
     })
+    st.markdown('**MDS Completeness Distribution**')
     st.altair_chart(
         alt.Chart(mds_buckets).mark_bar(color='#5E35B1').encode(
-            x=alt.X('Count:Q', title='Records'),
+            x=alt.X('Count:Q'),
             y=alt.Y('Bucket:N', sort='-x', title=''),
             tooltip=['Bucket', 'Count'],
         ).properties(height=220),
         use_container_width=True,
     )
-    st.subheader('Most Common Missing MDS Fields')
-    mds_missing_counter = {}
-    for m in gov_df['mds_missing']:
-        if m:
-            for field in m.split(', '):
-                mds_missing_counter[field] = mds_missing_counter.get(field, 0) + 1
-    if mds_missing_counter:
-        mds_miss_df = pd.DataFrame([
-            {'Field': k, 'Records Missing': v}
-            for k, v in sorted(mds_missing_counter.items(), key=lambda x: -x[1])
-        ])
-        st.altair_chart(
-            alt.Chart(mds_miss_df).mark_bar(color='#E64A19').encode(
-                x=alt.X('Records Missing:Q'),
-                y=alt.Y('Field:N', sort='-x', title=''),
-                tooltip=['Field', 'Records Missing'],
-            ).properties(height=250),
-            use_container_width=True,
-        )
-    if gov_meta['consent_available']:
-        st.divider()
-        st.subheader('Consent Status Breakdown')
-        consent_counts = gov_df['consent_state'].value_counts().reset_index()
-        consent_counts.columns = ['Status', 'Count']
-        st.altair_chart(
-            alt.Chart(consent_counts).mark_bar(color='#00838F').encode(
-                x=alt.X('Count:Q', title='Records'),
-                y=alt.Y('Status:N', sort='-x', title=''),
-                tooltip=['Status', 'Count'],
-            ).properties(height=220),
-            use_container_width=True,
-        )
-        cns1, cns2, cns3, cns4 = st.columns(4)
-        cns1.metric('Granted', gov_meta['consent_granted'])
-        cns2.metric('Restricted', gov_meta['consent_restricted'])
-        cns3.metric('Denied / Withdrawn', gov_meta['consent_blocked'])
-        cns4.metric('Missing', gov_meta['consent_missing'])
-        if gov_meta['consent_blocked'] > 0:
-            st.error(f'{gov_meta["consent_blocked"]} record(s) have denied or withdrawn consent — these must not be shared without further review.')
-    else:
-        st.divider()
-        st.info('Consent compliance check is not available for this file (no populated `consent_status` column).')
-    if gov_meta['pa_available']:
-        st.divider()
-        st.subheader('Prior-Authorization Status')
-        pa1, pa2, pa3 = st.columns(3)
-        pa1.metric('PA-Required Procedures', gov_meta['pa_required'])
-        pa2.metric('Missing PA Reference', gov_meta['pa_missing'])
-        pa3.metric('Valid PA on File', gov_meta['pa_valid'])
-        if gov_meta['pa_missing'] > 0:
-            st.error(f'{gov_meta["pa_missing"]} claim(s) will be rejected: procedure requires pre-authorization but no PA reference is on file.')
-    else:
-        st.divider()
-        st.info('Prior-authorization check is not available for this file (no populated `preauth_reference` column).')
-    st.divider()
-    st.subheader('Records with Governance Issues')
+
     problematic_gov = gov_df[
         (gov_df['mds_score'] < 0.80) |
         (gov_df['consent_state'].isin(['denied', 'withdrawn', 'missing'])) |
         (gov_df['consent_issues'] != '') |
         ((gov_df['pa_required'] == True) & (gov_df['pa_present'] == False))
     ].copy()
-    if problematic_gov.empty:
-        st.success('No governance issues detected.')
-    else:
-        st.caption(f'{len(problematic_gov)} record(s) with at least one governance issue.')
-        display_cols = ['canonical_id', 'given_name', 'family_name',
-                        'mds_score', 'mds_missing', 'consent_state', 'consent_issues',
-                        'pa_score', 'pa_issues']
-        display_cols = [c for c in display_cols if c in problematic_gov.columns]
-        st.dataframe(problematic_gov[display_cols], use_container_width=True)
+
+    if not problematic_gov.empty:
+        st.dataframe(problematic_gov, use_container_width=True)
         st.download_button(
             label='Download Governance Report (CSV)',
             data=problematic_gov.to_csv(index=False).encode('utf-8'),
             file_name='governance_report.csv', mime='text/csv',
         )
 
-with tab7:
-    st.subheader('Tamper-Evident Audit Trail')
+
+# ============================================================
+# Page: Audit Trail
+# ============================================================
+def pg_audit():
+    st.title('Audit Trail')
+    st.caption('Tamper-evident log of every decision in the current session.')
+
+    result = st.session_state.get('assessment')
+    if result is None:
+        st.info('No batch loaded. Go to **Analyze → Batch Upload**.')
+        return
+
+    results_df, meta, df_meta, clinical_df, clinical_meta, drg_df, drg_meta, gov_df, gov_meta, schema = result
+
     ac1, ac2 = st.columns(2)
     with ac1:
         if st.button('Verify audit chain'):
@@ -953,41 +1177,53 @@ with tab7:
                     file_name='audit_log.jsonl',
                     mime='application/jsonl',
                 )
-    st.divider()
-    st.subheader('Standardization Report')
-    st.markdown('Shows exactly what was cleaned before scoring. Formatting differences do not trigger flags.')
+
+
+# ============================================================
+# Page: Standardization
+# ============================================================
+def pg_standardization():
+    st.title('Standardization')
+    st.caption('What was cleaned before scoring, and the export of the standardized file.')
+
+    result = st.session_state.get('assessment')
+    if result is None:
+        st.info('No batch loaded. Go to **Analyze → Batch Upload**.')
+        return
+
+    results_df, meta, df_meta, clinical_df, clinical_meta, drg_df, drg_meta, gov_df, gov_meta, schema = result
+    region = _get_config()
+
     st.metric('Records Standardized', meta['total_normalized'])
-    st.divider()
-    st.subheader('Export Standardized Data')
-    st.markdown('Download the cleaned, schema-mapped version of this file. Column names are preserved from the original file where possible.')
+
     export_cols = ['canonical_id', 'emirates_id', 'given_name', 'family_name',
                    'date_of_birth', 'gender', 'nationality', 'source_facility', 'registration_date']
     export_cols = [c for c in export_cols if c in df_meta.columns]
     cleaned = df_meta[export_cols].copy()
     original_names = schema.get('original_names', {})
     cleaned = cleaned.rename(columns=original_names)
+
     st.download_button(
         label='Download Cleaned & Standardized CSV',
         data=cleaned.to_csv(index=False).encode('utf-8'),
-        file_name=f'standardized_{selected_region.split()[0].lower()}.csv',
+        file_name=f'standardized_{st.session_state["region_name"].split()[0].lower()}.csv',
         mime='text/csv',
-        use_container_width=True,
     )
-    st.divider()
+
     if meta['total_normalized'] > 0:
         rows = []
         for i, r in df_meta.iterrows():
             ch = []
             if r['_changed_name']:
-                ch.append(f'Name: {r["_orig_given"]} {r["_orig_family"]} -> {r["given_name"]} {r["family_name"]}')
+                ch.append(f'Name: {r["_orig_given"]} {r["_orig_family"]} → {r["given_name"]} {r["family_name"]}')
             if r['_changed_dob']:
-                ch.append(f'DOB: {r["_orig_dob"]} -> {r["date_of_birth"]}')
+                ch.append(f'DOB: {r["_orig_dob"]} → {r["date_of_birth"]}')
             if r['_changed_id']:
-                ch.append(f'ID: {r["_orig_id"]} -> {r["emirates_id"]}')
+                ch.append(f'ID: {r["_orig_id"]} → {r["emirates_id"]}')
             if r['_changed_gender']:
-                ch.append(f'Gender: {r["_orig_gender"]} -> {r["gender"]}')
+                ch.append(f'Gender: {r["_orig_gender"]} → {r["gender"]}')
             if r['_changed_nationality']:
-                ch.append(f'Nationality: {r["_orig_nationality"]} -> {r["nationality"]}')
+                ch.append(f'Nationality: {r["_orig_nationality"]} → {r["nationality"]}')
             if ch:
                 rows.append({'canonical_id': r.get('canonical_id', f'ROW_{i}'), 'Changes': ' | '.join(ch)})
         cdf = pd.DataFrame(rows)
@@ -997,12 +1233,134 @@ with tab7:
             data=cdf.to_csv(index=False).encode('utf-8'),
             file_name='normalization_log.csv', mime='text/csv',
         )
-    st.divider()
-    st.subheader('Source Data Quality Snapshot')
-    c1, c2, c3 = st.columns(3)
-    c1.metric('Total Records', meta['total_raw'])
-    c2.metric(f'Missing {region["id_label"]}', meta['missing_ids'])
-    c3.metric(f'Duplicate {region["id_label"]}', meta['dup_ids'])
 
-with tab8:
-    render_hl7_tab(region, selected_color)
+
+# ============================================================
+# Page: Configuration
+# ============================================================
+def pg_config():
+    st.title('Configuration')
+    st.caption('Region profile and display settings. Changes apply immediately across the app.')
+
+    selected_region = st.selectbox(
+        'Region Profile',
+        list(REGION_PROFILES.keys()),
+        index=list(REGION_PROFILES.keys()).index(st.session_state['region_name']),
+        help='Swaps the ID format, required fields, DOB range, and trusted facility list.',
+    )
+    if selected_region != st.session_state['region_name']:
+        st.session_state['region_name'] = selected_region
+        st.session_state['assessment'] = None
+        st.session_state['uploaded_name'] = None
+        st.success(f'Region switched to {selected_region}. Reload your file to re-score.')
+
+    selected_color = st.selectbox(
+        'Bar Color',
+        list(COLOR_OPTIONS.keys()),
+        index=list(COLOR_OPTIONS.keys()).index(st.session_state['bar_color_name']),
+    )
+    if selected_color != st.session_state['bar_color_name']:
+        st.session_state['bar_color_name'] = selected_color
+
+    st.divider()
+    st.markdown('**Current region rules**')
+    region = _get_config()
+    st.markdown(f'- Identifier field: **{region["id_label"]}**')
+    st.markdown(f'- ID pattern: `{region["id_pattern"]}`')
+    st.markdown(f'- Regulatory body: **{region["regulatory_body"]}**')
+    st.markdown(f'- Trusted facilities: {len(region["trusted_facilities"])}')
+
+
+# ============================================================
+# Page: About
+# ============================================================
+def pg_about():
+    st.title('About this demo')
+
+    st.markdown('''
+### What this tool does
+
+A pre-submission trust gate for patient records in a health information exchange.
+Every incoming record is scored across five identity dimensions and routed to
+one of four outcomes. It does not merge records, resolve collisions, or
+auto-correct data. It identifies problems, explains them, and hands control
+to a human.
+
+### The five dimensions
+
+| Dimension | Weight | Check |
+|---|---|---|
+| Completeness | 0.20 | Required identity fields present |
+| Temporal Validity | 0.15 | Plausible date of birth |
+| Identity Consistency | 0.20 | ID format matches region standard |
+| Provenance | 0.15 | Trusted source facility |
+| Cross-Record Consistency | 0.30 | Collision with existing patient |
+
+### Module checks
+
+- **Coding Coherence** — ICD validity, ICD-CPT match, episode timeline, triage-cost anomaly
+- **DRG Readiness** — mandatory inputs for IR-DRG grouping
+- **MDS Completeness** — NABIDH/Malaffi minimum data set
+- **Consent Compliance** — granted / restricted / denied / withdrawn
+- **Prior-Authorization** — DHA/DOH pre-auth presence
+
+### Scoring configuration notice
+
+This demo uses a revised scoring configuration, tuned separately from the
+published paper's validated configuration.
+
+- **Composite formula:** weighted sum × (0.4 + 0.6 × weakest dimension score)
+- **Auto-link threshold:** 0.75 (paper: 0.952)
+- **Quarantine threshold:** 0.45 (paper: 0.571)
+
+The revised values were tuned for realistic flag rates on messy data. A
+hospital pilot should re-derive both using the paper's methodology.
+
+### Deployment
+
+- **Batch path:** CSV upload for retrospective analysis and pre-pilot proof of concept.
+- **Real-time path:** FastAPI service (`app.py`) with `/assess-hl7` endpoint. Deployed as a Docker container inside hospital infrastructure. Reads HL7 v2 ADT messages directly from the interface engine.
+
+No patient data leaves the hospital network in production.
+
+### Privacy
+
+This demo uses synthetic data only. Do not upload real patient health
+information.
+    ''')
+
+
+# ============================================================
+# Router
+# ============================================================
+pages = {
+    'Overview': [
+        st.Page(pg_dashboard, title='Dashboard', icon='📊', default=True),
+    ],
+    'Analyze': [
+        st.Page(pg_hl7, title='HL7 Stream', icon='🔌'),
+        st.Page(pg_batch, title='Batch Upload', icon='📥'),
+    ],
+    'Reports': [
+        st.Page(pg_flagged, title='Flagged Records', icon='🚩'),
+        st.Page(pg_coding, title='Coding Coherence', icon='🩺'),
+        st.Page(pg_drg, title='DRG Readiness', icon='💳'),
+        st.Page(pg_gov, title='Data Governance', icon='🔒'),
+    ],
+    'Compliance': [
+        st.Page(pg_audit, title='Audit Trail', icon='🧾'),
+        st.Page(pg_standardization, title='Standardization', icon='🧹'),
+    ],
+    'Settings': [
+        st.Page(pg_config, title='Configuration', icon='⚙️'),
+        st.Page(pg_about, title='About', icon='ℹ️'),
+    ],
+}
+
+# Sidebar branding
+with st.sidebar:
+    st.markdown('### 🏥 Identity Trust')
+    st.caption(f'Region: {st.session_state["region_name"]}')
+
+pg = st.navigation(pages)
+pg.run()
