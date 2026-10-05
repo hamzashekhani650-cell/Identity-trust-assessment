@@ -23,7 +23,14 @@ from trust_layer.mds_validators import check_mds_completeness
 from trust_layer.consent_validators import validate_consent
 from trust_layer.schema_mapper import map_columns, CANONICAL_FIELDS, detect_output_file
 from trust_layer.sample_generator import generate_sample
+import sys
+from pathlib import Path
 
+# Add the current file's directory to the system path
+# This ensures the 'ui_theme' module can be found
+sys.path.append(str(Path(__file__).resolve().parent))
+
+import ui_theme as ui
 import ui_theme as ui
 
 try:
