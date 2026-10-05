@@ -1,3 +1,13 @@
+import sys
+import os
+
+# Add the directory containing demo.py to the Python path
+sys.path.append(os.path.dirname(os.path.abspath(__file__)))
+
+# ... then your other imports
+import streamlit as st
+# ... eventually line 42...
+import ui_theme as ui
 '''
 Identity Trust Assessment — application entry point.
 
