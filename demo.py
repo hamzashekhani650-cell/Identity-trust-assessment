@@ -1935,10 +1935,10 @@ This demo uses a revised scoring configuration, tuned separately from the
 published paper's validated configuration.
 
 - **Composite formula:** weighted sum × (0.4 + 0.6 × weakest dimension score)
-- **Auto-link threshold:** 0.75 (paper: 0.952)
-- **Quarantine threshold:** 0.45 (paper: 0.571)
+- **Demo thresholds (Trust-Hard variant):** auto-link ≥ 0.75 · flag 0.45–0.75 · quarantine < 0.45 · collision override at cross-record = 0.0
+- **Paper's validated thresholds (Trust-Soft, §3.7):** auto-link ≥ 0.85 · flag 0.50–0.85 · quarantine < 0.50 · no collision override
 
-The revised values were tuned for realistic flag rates on messy data. A
+The demo values were tuned for realistic flag rates on messy data. A
 hospital pilot should re-derive both using the paper's methodology.
 
 ### Deployment
