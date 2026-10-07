@@ -1,4 +1,4 @@
-'''
+"""
 Identity Trust Assessment — FastAPI service.
 
 Exposes the trust engine as a REST API. A hospital interface engine
@@ -23,7 +23,7 @@ Configuration:
 Deployment:
   This service is intended to run inside the hospital's infrastructure
   via Docker. No patient data should ever leave the hospital network.
-'''
+"""
 import os
 import re
 from typing import List, Optional
@@ -78,6 +78,8 @@ REGION_PROFILE = os.environ.get('REGION_PROFILE', 'UAE (DOH)')
 THRESHOLD_AUTO = float(os.environ.get('THRESHOLD_AUTO', '0.75'))
 THRESHOLD_QUAR = float(os.environ.get('THRESHOLD_QUAR', '0.45'))
 
+FLOOR = 0.4  # soft-minimum floor used in the composite formula
+
 
 REGION_CONFIG = {
     'UAE (DOH)': {
@@ -119,8 +121,11 @@ class HL7Input(BaseModel):
 
 class Decision(BaseModel):
     canonical_id: str
-    trust_score: float
+    trust_score: float          # composite (the routing number)
+    weighted_sum: float         # raw weighted sum before floor penalty
+    min_dimension: float        # weakest of the 5 dimensions
     decision: str
+    routing_reason: str         # why the decision fired
     dimensions: dict
     primary_issue: str
     explanation: str
@@ -131,7 +136,7 @@ class Decision(BaseModel):
 app = FastAPI(
     title='Identity Trust Assessment API',
     description='Pre-submission record trust gate for patient identity resolution and claim readiness in HIEs.',
-    version='v0.6.0',
+    version='v0.6.1',
 )
 
 _cross_validator = _CrossRecordValidator()
@@ -219,8 +224,19 @@ def _score_record(payload):
         'provenance': provenance,
         'cross_record': cross_record,
     }
-    score = compute_trust_score(**dims)
-    decision = route_decision_hard(score, cross_record, THRESHOLD_AUTO, THRESHOLD_QUAR)
+
+    # Weighted sum (raw). compute_trust_score returns a single float.
+    weighted_sum = compute_trust_score(**dims)
+
+    # Composite = weighted_sum × (0.4 + 0.6 × weakest_dimension)
+    # Matches the paper's soft-minimum floor formulation.
+    min_dim = min(dims.values())
+    composite = round(weighted_sum * (FLOOR + (1 - FLOOR) * min_dim), 4)
+
+    # Route on the composite score, unpack the (decision, reason) tuple.
+    decision, routing_reason = route_decision_hard(
+        composite, cross_record, THRESHOLD_AUTO, THRESHOLD_QUAR
+    )
 
     explanation = 'Record is clean and trusted.'
     primary_issue = 'None'
@@ -251,12 +267,15 @@ def _score_record(payload):
 
     return {
         'canonical_id': canonical_id,
-        'trust_score': round(score, 3),
+        'trust_score': composite,
+        'weighted_sum': round(weighted_sum, 4),
+        'min_dimension': round(min_dim, 4),
         'decision': decision,
+        'routing_reason': routing_reason,
         'dimensions': dims,
         'primary_issue': primary_issue,
         'explanation': explanation,
-        'config_version': 'v0.6.0',
+        'config_version': 'v0.6.1',
         'thresholds': {'auto': THRESHOLD_AUTO, 'quarantine': THRESHOLD_QUAR},
     }
 
@@ -267,7 +286,7 @@ def health():
         'status': 'ok',
         'region': REGION_PROFILE,
         'thresholds': {'auto': THRESHOLD_AUTO, 'quarantine': THRESHOLD_QUAR},
-        'config_version': 'v0.6.0',
+        'config_version': 'v0.6.1',
         'auth_required': bool(API_KEY),
     }
 
