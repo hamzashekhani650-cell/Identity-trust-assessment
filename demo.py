@@ -875,7 +875,9 @@ def run_assessment(file_bytes, region_name):
             'provenance': validate_provenance_region(rec, config),
             'cross_record': cv.validate(rec),
         }
-        score = compute_trust_score(**dims)
+        weighted_sum = compute_trust_score(**dims)
+        min_dim = min(dims.values())
+        composite = round(weighted_sum * (0.4 + 0.6 * min_dim), 4)
 
         id_label = config['id_label']
         reg = config['regulatory_body']
@@ -884,14 +886,14 @@ def run_assessment(file_bytes, region_name):
 
         if critical_present < 2:
             decision = 'INSUFFICIENT_DATA'
-            score = 0.0
+            composite = 0.0
             explanation = 'Record contains fewer than two of the four core identity fields (name, ID, DOB).'
             primary_issue = 'Insufficient Data'
+            routing_reason = 'Insufficient identity fields'
         else:
-            decision, routing_reason = route_decision_hard(score, dims['cross_record'])
+            decision, routing_reason = route_decision_hard(composite, dims['cross_record'])
             explanation = 'Record is clean and trusted.'
             primary_issue = 'None'
-
             if decision in ('LINK_WITH_FLAG', 'QUARANTINE'):
                 weakest = min(dims, key=dims.get)
                 wv = dims[weakest]
