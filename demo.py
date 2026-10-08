@@ -885,12 +885,12 @@ def run_assessment(file_bytes, region_name):
         if critical_present < 2:
             decision = 'INSUFFICIENT_DATA'
             score = 0.0
-            explanation = 'Record contains fewer than two of the four core identity fields (name, ID, DOB). Identity trust cannot be assessed reliably.'
+            explanation = 'Record contains fewer than two of the four core identity fields (name, ID, DOB).'
             primary_issue = 'Insufficient Data'
-      else:
-        decision, routing_reason = route_decision_hard(score, dims['cross_record'])
-        explanation = 'Record is clean and trusted.'
-        primary_issue = 'None'
+        else:
+            decision, routing_reason = route_decision_hard(score, dims['cross_record'])
+            explanation = 'Record is clean and trusted.'
+            primary_issue = 'None'
 
             if decision in ('LINK_WITH_FLAG', 'QUARANTINE'):
                 weakest = min(dims, key=dims.get)
