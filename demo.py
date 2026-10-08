@@ -1390,7 +1390,7 @@ def pg_hl7():
 
             weighted_sum = compute_trust_score(**dims)
             min_dim = min(dims.values())
-            composite = round(weighted_sum * (0.4 + 0.6 * min_dim), 4)
+            composite = round(weighted_sum * (0.65 + 0.35 * min_dim), 4)
             decision, routing_reason = route_decision_hard(composite, dims['cross_record'])
 
             cc1, cc2 = st.columns(2)
