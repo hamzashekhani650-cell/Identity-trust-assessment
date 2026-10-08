@@ -1370,8 +1370,10 @@ def pg_hl7():
                 'provenance': provenance,
                 'cross_record': validator.validate(rec),
             }
-            score = compute_trust_score(**dims)
-            decision = route_decision_hard(score, dims['cross_record'])
+            weighted_sum = compute_trust_score(**dims)
+        min_dim = min(dims.values())
+        composite = round(weighted_sum * (0.4 + 0.6 * min_dim), 4)
+        decision, routing_reason = route_decision_hard(composite, dims['cross_record'])
 
             cc1, cc2 = st.columns(2)
             cc1.metric('Trust Score', f'{score:.3f}')
