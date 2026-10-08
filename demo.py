@@ -940,10 +940,14 @@ def run_assessment(file_bytes, region_name):
             elif weakest == 'temporal':
                 explanation = f'TEMPORAL ERROR: The DOB {rec.date_of_birth or "(unset)"} could not be normalized to a valid ISO date.'
                 primary_issue = 'Temporal Validity Error'
-            elif weakest == 'identity':
-                explanation = (f'IDENTITY INCONSISTENCY: The {id_label} {rec.emirates_id or "(unset)"} does not match the {reg} format '
-                               f'(expected e.g. {config["id_example"]}).')
-                primary_issue = 'Malformed Identifier'
+           elif weakest == 'identity':
+                if rec.emirates_id:
+                    explanation = (f'IDENTITY INCONSISTENCY: The {id_label} {rec.emirates_id} does not match the {reg} format '
+                                   f'(expected e.g. {config["id_example"]}).')
+                    primary_issue = 'Malformed Identifier'
+                else:
+                    explanation = f'MISSING IDENTIFIER: No {id_label} supplied. Cannot verify against the national format.'
+                    primary_issue = 'Missing Identifier'
 
         results.append({
             'canonical_id': rec.canonical_id, 'given_name': rec.given_name,
