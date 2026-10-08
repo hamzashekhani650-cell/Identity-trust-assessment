@@ -888,7 +888,7 @@ def run_assessment(file_bytes, region_name):
             explanation = 'Record contains fewer than two of the four core identity fields (name, ID, DOB). Identity trust cannot be assessed reliably.'
             primary_issue = 'Insufficient Data'
         else:
-            decision = route_decision_hard(score, dims['cross_record'])
+           decision, routing_reason = route_decision_hard(score, dims['cross_record']) 
             explanation = 'Record is clean and trusted.'
             primary_issue = 'None'
 
