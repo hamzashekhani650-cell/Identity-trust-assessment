@@ -1376,7 +1376,7 @@ def pg_hl7():
         decision, routing_reason = route_decision_hard(composite, dims['cross_record'])
 
             cc1, cc2 = st.columns(2)
-            cc1.metric('Trust Score', f'{score:.3f}')
+            cc1.metric('Composite Trust Score', f'{composite:.3f}')
             cc2.metric('Decision', ui.DECISION_LABELS.get(decision, decision))
             m_title, m_text = DECISION_MEANING.get(decision, ('', ''))
             ui.callout(m_title, m_text, ui.DECISION_COLORS.get(decision, ui.TEAL))
