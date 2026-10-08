@@ -634,6 +634,7 @@ ISSUE_ACTION = {
     'Untrusted Facility': 'The record came from a facility that is not on the trusted list. Confirm it with the sending facility.',
     'Temporal Validity Error': 'The date of birth is impossible or unreadable. Correct it at the source.',
     'Malformed Identifier': 'The ID does not follow the national format. Check it for typos or missing digits.',
+    'Missing Identifier': 'Obtain the national ID from the source facility before re-submitting.',
     'Insufficient Data': 'Too few identity fields were supplied. Obtain at least name, ID and date of birth.',
 }
 
@@ -1984,7 +1985,7 @@ to a human.
 This demo uses a revised scoring configuration, tuned separately from the
 published paper's validated configuration.
 
-- **Composite formula:** weighted sum × (0.4 + 0.6 × weakest dimension score)
+- **Composite formula:** weighted sum × (0.65 + 0.35 × weakest dimension score) — demo tuning; paper's validated floor is 0.4
 - **Demo thresholds (Trust-Hard variant):** auto-link ≥ 0.75 · flag 0.45–0.75 · quarantine < 0.45 · collision override at cross-record = 0.0
 - **Paper's validated thresholds (Trust-Soft, §3.7):** auto-link ≥ 0.85 · flag 0.50–0.85 · quarantine < 0.50 · no collision override
 
