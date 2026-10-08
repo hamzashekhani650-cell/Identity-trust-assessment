@@ -631,10 +631,10 @@ ISSUE_ACTION = {
     'Identifier Collision': "Two different people appear to share one ID. Check the ID against the patient's physical document before linking either record.",
     'Potential Name/DOB Collision': 'Same name and birth date as an existing patient but a different ID. Confirm whether this is a duplicate of the same person or a different person.',
     'Missing Demographics': 'Fill in the missing fields from the source system, then re-submit.',
+    'Missing Identifier': 'Obtain the national ID from the source facility before re-submitting.',
     'Untrusted Facility': 'The record came from a facility that is not on the trusted list. Confirm it with the sending facility.',
     'Temporal Validity Error': 'The date of birth is impossible or unreadable. Correct it at the source.',
     'Malformed Identifier': 'The ID does not follow the national format. Check it for typos or missing digits.',
-    'Missing Identifier': 'Obtain the national ID from the source facility before re-submitting.',
     'Insufficient Data': 'Too few identity fields were supplied. Obtain at least name, ID and date of birth.',
 }
 
@@ -806,8 +806,6 @@ class Record:
     def __init__(self, **kwargs):
         for k, v in kwargs.items():
             setattr(self, k, v)
-
-
 # ============================================================
 # Assessment pipeline (cached)
 # ============================================================
@@ -888,9 +886,11 @@ def run_assessment(file_bytes, region_name):
             'cross_record': cv.validate(rec),
         }
 
+        # Composite follows the paper's soft-minimum formulation:
+        # T(r) = weighted_sum × max(min_dimension, floor), floor = 0.4.
         weighted_sum = compute_trust_score(**dims)
         min_dim = min(dims.values())
-        composite = round(weighted_sum * (0.65 + 0.35 * min_dim), 4)
+        composite = round(weighted_sum * max(min_dim, 0.4), 4)
 
         id_label = config['id_label']
         reg = config['regulatory_body']
@@ -941,7 +941,7 @@ def run_assessment(file_bytes, region_name):
             elif weakest == 'temporal':
                 explanation = f'TEMPORAL ERROR: The DOB {rec.date_of_birth or "(unset)"} could not be normalized to a valid ISO date.'
                 primary_issue = 'Temporal Validity Error'
-           elif weakest == 'identity':
+            elif weakest == 'identity':
                 if rec.emirates_id:
                     explanation = (f'IDENTITY INCONSISTENCY: The {id_label} {rec.emirates_id} does not match the {reg} format '
                                    f'(expected e.g. {config["id_example"]}).')
@@ -1393,9 +1393,10 @@ def pg_hl7():
                 'cross_record': validator.validate(rec),
             }
 
+            # Composite follows the paper's soft-minimum formulation.
             weighted_sum = compute_trust_score(**dims)
             min_dim = min(dims.values())
-            composite = round(weighted_sum * (0.65 + 0.35 * min_dim), 4)
+            composite = round(weighted_sum * max(min_dim, 0.4), 4)
             decision, routing_reason = route_decision_hard(composite, dims['cross_record'])
 
             cc1, cc2 = st.columns(2)
@@ -1431,9 +1432,7 @@ def pg_hl7():
             st.divider()
             st.markdown('### Session History')
             st.dataframe(pd.DataFrame(st.session_state['hl7_history']), use_container_width=True)
-
-
-# ============================================================
+            # ============================================================
 # Page: Batch Upload (CSV)
 # ============================================================
 
@@ -1985,7 +1984,7 @@ to a human.
 This demo uses a revised scoring configuration, tuned separately from the
 published paper's validated configuration.
 
-- **Composite formula:** weighted sum × (0.65 + 0.35 × weakest dimension score) — demo tuning; paper's validated floor is 0.4
+- **Composite formula:** weighted sum × max(min_dimension, 0.4)
 - **Demo thresholds (Trust-Hard variant):** auto-link ≥ 0.75 · flag 0.45–0.75 · quarantine < 0.45 · collision override at cross-record = 0.0
 - **Paper's validated thresholds (Trust-Soft, §3.7):** auto-link ≥ 0.85 · flag 0.50–0.85 · quarantine < 0.50 · no collision override
 
@@ -2070,5 +2069,3 @@ with st.sidebar:
 
 pg = st.navigation(pages)
 pg.run()
-    
-  
