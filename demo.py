@@ -935,7 +935,8 @@ def run_assessment(file_bytes, region_name):
         results.append({
             'canonical_id': rec.canonical_id, 'given_name': rec.given_name,
             'family_name': rec.family_name, 'source_facility': rec.source_facility,
-            'trust_score': round(score, 3), 'decision': decision,
+            'trust_score': round(composite, 4), 'weighted_sum': round(weighted_sum, 4),
+            'routing_reason': routing_reason, 'decision': decision,
             'explanation': explanation, 'primary_issue': primary_issue,
             'dim_completeness': dims['completeness'], 'dim_temporal': dims['temporal'],
             'dim_identity': dims['identity'], 'dim_provenance': dims['provenance'],
