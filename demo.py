@@ -889,7 +889,7 @@ def run_assessment(file_bytes, region_name):
 
         weighted_sum = compute_trust_score(**dims)
         min_dim = min(dims.values())
-        composite = round(weighted_sum * (0.4 + 0.6 * min_dim), 4)
+        composite = round(weighted_sum * (0.65 + 0.35 * min_dim), 4)
 
         id_label = config['id_label']
         reg = config['regulatory_body']
