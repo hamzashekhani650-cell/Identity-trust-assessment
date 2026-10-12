@@ -1,6 +1,6 @@
-from database import AuditDatabase
 # trust_engine.py
 import re
+from database import AuditDatabase
 
 FLOOR = 0.4
 
@@ -65,6 +65,7 @@ class TrustEngine:
         self.threshold_quar = quar_threshold
         self.config = REGION_CONFIG[region_profile]
         self.cross_validator = CrossRecordValidator()
+        self.db = AuditDatabase()  # <-- DATABASE INITIALIZATION ADDED HERE
 
     def _normalize_text(self, value):
         if not value:
@@ -206,6 +207,15 @@ class TrustEngine:
                 primary_issue = 'Malformed Identifier'
 
         self.cross_validator.add_record(rec)
+
+        # 4. Save to database before returning
+        self.db.log_decision({
+            'canonical_id': canonical_id,
+            'trust_score': composite,
+            'decision': decision,
+            'primary_issue': primary_issue,
+            'dimensions': dims
+        })
 
         return {
             'canonical_id': canonical_id,
