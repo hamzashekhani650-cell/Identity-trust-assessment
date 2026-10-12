@@ -8,37 +8,31 @@
 # Build:
 #   docker build -t trust-layer:latest .
 #
-# Run (open mode, dev only):
-#   docker run -p 8000:8000 trust-layer:latest
-#
 # Run (production, with API key):
 #   docker run -p 8000:8000 \
 #     -e TRUST_LAYER_API_KEY=your-secret-key \
 #     -e REGION_PROFILE="UAE (DOH)" \
 #     trust-layer:latest
-#
-# Health check:
-#   curl http://localhost:8000/health
 
 FROM python:3.11-slim
 
 WORKDIR /app
 
-# Install system dependencies
+# Install system dependencies (curl for healthcheck, build-essential for some pip packages)
 RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \
+    build-essential \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy and install Python dependencies
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Copy the trust layer and API
-COPY trust_layer/ ./trust_layer/
-COPY app.py .
-COPY README.md .
-COPY LICENSE .
-COPY INTEGRATION.md .
+# Copy the entire application code (this includes trust_layer/, trust_engine.py, database.py, etc.)
+COPY . .
+
+# Create a directory for the SQLite database and ensure it's writable
+RUN mkdir -p /app/data
 
 # Run as non-root user
 RUN useradd -m -u 1000 trustuser && chown -R trustuser:trustuser /app
