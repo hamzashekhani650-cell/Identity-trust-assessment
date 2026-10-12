@@ -1,0 +1,16 @@
+version: '3.8'
+
+services:
+  trust-gate:
+    build: .
+    container_name: identity_trust_gate
+    ports:
+      - "8000:8000"
+    environment:
+      - REGION_PROFILE=UAE (DOH)
+      - THRESHOLD_AUTO=0.75
+      - THRESHOLD_QUAR=0.45
+      - TRUST_LAYER_API_KEY=  # Leave blank for now, set in production
+    volumes:
+      - ./data:/app/data  # Persists the SQLite database outside the container
+    restart: unless-stopped
