@@ -10,3 +10,5 @@ openpyxl
 fastapi
 uvicorn
 httpx
+pytest
+pylint
