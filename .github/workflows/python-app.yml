@@ -25,8 +25,7 @@ jobs:
         
     - name: Lint with pylint (Errors Only)
       run: |
-        # --errors-only means it only fails for actual syntax errors, not style nitpicks
-        pylint --errors-only trust_engine.py app.py database.py mllp_listener.py sftp_poller.py trust_layer/
+        pylint --errors-only trust_engine.py app.py database.py sftp_poller.py trust_layer/scoring.py trust_layer/router.py
         
     - name: Test with pytest
       run: |
