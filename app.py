@@ -1,107 +1,24 @@
-"""
-Identity Trust Assessment — FastAPI service.
-
-Exposes the trust engine as a REST API. A hospital interface engine
-(Mirth Connect, Rhapsody, Cloverleaf) calls /assess with a patient
-record and receives a routing decision in return.
-
-Endpoints:
-  GET  /health              — liveness check
-  POST /assess              — accept a JSON patient record, return decision
-  POST /assess-hl7          — accept a raw HL7 v2 message, return decision
-  POST /assess-batch        — accept a list of JSON records, return decisions
-  POST /reset               — clear in-memory state (testing only)
-
-Auth:
-  X-API-Key header. In production, set TRUST_LAYER_API_KEY env var.
-
-Configuration:
-  REGION_PROFILE — 'UAE (DOH)' or 'India (ABDM)'. Default UAE.
-  THRESHOLD_AUTO — auto-link threshold. Default 0.75.
-  THRESHOLD_QUAR — quarantine threshold. Default 0.45.
-
-Deployment:
-  This service is intended to run inside the hospital's infrastructure
-  via Docker. No patient data should ever leave the hospital network.
-"""
+# app.py
 import os
-import re
 from typing import List, Optional
 
 from fastapi import FastAPI, Header, HTTPException
 from pydantic import BaseModel
 
-from trust_layer.scoring import compute_trust_score
-from trust_layer.router import route_decision_hard
+from trust_engine import TrustEngine
 from trust_layer.hl7_ingest import parse_hl7_message, validate_hl7_structure
-
-
-# ============================================================
-# Self-contained cross-record validator
-# ============================================================
-class _CrossRecordValidator:
-    def __init__(self):
-        self.identifier_index = {}
-        self.name_dob_index = {}
-
-    def add_record(self, record):
-        if getattr(record, 'emirates_id', None):
-            self.identifier_index.setdefault(record.emirates_id, set()).add(record.canonical_id)
-        key = (
-            (getattr(record, 'given_name', '') or '').strip().lower(),
-            (getattr(record, 'family_name', '') or '').strip().lower(),
-            getattr(record, 'date_of_birth', '') or '',
-        )
-        if key != ('', '', ''):
-            self.name_dob_index.setdefault(key, set()).add(record.canonical_id)
-
-    def validate(self, record):
-        eid = getattr(record, 'emirates_id', None)
-        if eid and eid in self.identifier_index:
-            owners = self.identifier_index[eid]
-            if record.canonical_id not in owners:
-                return 0.0
-        key = (
-            (getattr(record, 'given_name', '') or '').strip().lower(),
-            (getattr(record, 'family_name', '') or '').strip().lower(),
-            getattr(record, 'date_of_birth', '') or '',
-        )
-        if key != ('', '', '') and key in self.name_dob_index:
-            owners = self.name_dob_index[key]
-            if record.canonical_id not in owners:
-                return 0.5
-        return 1.0
-
 
 API_KEY = os.environ.get('TRUST_LAYER_API_KEY', '')
 REGION_PROFILE = os.environ.get('REGION_PROFILE', 'UAE (DOH)')
 THRESHOLD_AUTO = float(os.environ.get('THRESHOLD_AUTO', '0.75'))
 THRESHOLD_QUAR = float(os.environ.get('THRESHOLD_QUAR', '0.45'))
 
-FLOOR = 0.4  # soft-minimum floor used in the composite formula
-
-
-REGION_CONFIG = {
-    'UAE (DOH)': {
-        'id_label': 'Emirates ID',
-        'id_pattern': r'^784\d{12}$',
-        'trusted_facilities': {
-            'Cleveland Clinic Abu Dhabi', 'Ssmc', 'Al Noor Hospital',
-            'Tawam Hospital', 'Sheikh Khalifa Medical City',
-        },
-        'required_fields': ['emirates_id', 'given_name', 'family_name', 'date_of_birth'],
-    },
-    'India (ABDM)': {
-        'id_label': 'ABHA / Aadhaar',
-        'id_pattern': r'^\d{12}$',
-        'trusted_facilities': {
-            'Manipal Hospital', 'Apollo Hospital', 'Fortis Healthcare',
-            'Max Healthcare', 'Aiims', 'Aiims Delhi', 'Narayana Health',
-        },
-        'required_fields': ['emirates_id', 'given_name', 'family_name', 'date_of_birth'],
-    },
-}
-
+# Initialize the Engine
+engine = TrustEngine(
+    region_profile=REGION_PROFILE,
+    auto_threshold=THRESHOLD_AUTO,
+    quar_threshold=THRESHOLD_QUAR
+)
 
 class PatientInput(BaseModel):
     emirates_id: Optional[str] = None
@@ -114,188 +31,47 @@ class PatientInput(BaseModel):
     registration_date: str = ''
     canonical_id: str = ''
 
-
 class HL7Input(BaseModel):
     message: str
 
-
 class Decision(BaseModel):
     canonical_id: str
-    trust_score: float          # composite (the routing number)
-    weighted_sum: float         # raw weighted sum before floor penalty
-    min_dimension: float        # weakest of the 5 dimensions
+    trust_score: float
+    weighted_sum: float
+    min_dimension: float
     decision: str
-    routing_reason: str         # why the decision fired
+    routing_reason: str
     dimensions: dict
     primary_issue: str
     explanation: str
     config_version: str
     thresholds: dict
 
-
 app = FastAPI(
     title='Identity Trust Assessment API',
     description='Pre-submission record trust gate for patient identity resolution and claim readiness in HIEs.',
-    version='v0.6.1',
+    version='v0.7.0', # Bumped version for the refactor
 )
-
-_cross_validator = _CrossRecordValidator()
-
 
 def _check_auth(x_api_key):
     if API_KEY and x_api_key != API_KEY:
         raise HTTPException(status_code=401, detail='Invalid or missing API key')
 
-
-def _normalize_text(value):
-    if not value:
-        return ''
-    s = str(value).strip()
-    if s.lower() in ('nan', 'nat', 'none'):
-        return ''
-    return ' '.join(s.split()).title()
-
-
-def _normalize_id(value):
-    if not value:
-        return None
-    digits = ''.join(c for c in str(value) if c.isdigit())
-    return digits if digits else None
-
-
-def _score_record(payload):
-    cfg = REGION_CONFIG[REGION_PROFILE]
-
-    given = _normalize_text(payload.given_name)
-    family = _normalize_text(payload.family_name)
-    dob = str(payload.date_of_birth).strip()[:10]
-    eid = _normalize_id(payload.emirates_id)
-    facility = _normalize_text(payload.source_facility)
-    canonical_id = payload.canonical_id or 'UNKNOWN'
-
-    present = 0
-    required = cfg['required_fields']
-    fields = {
-        'emirates_id': eid,
-        'given_name': given,
-        'family_name': family,
-        'date_of_birth': dob,
-    }
-    for f in required:
-        if fields.get(f):
-            present += 1
-    completeness = round(present / len(required), 2) if required else 1.0
-
-    try:
-        year = int(dob[:4])
-        temporal = 1.0 if 1900 <= year <= 2025 else 0.3
-    except (ValueError, TypeError):
-        temporal = 0.0
-
-    if not eid:
-        identity = 0.0
-    elif re.match(cfg['id_pattern'], eid):
-        identity = 1.0
-    else:
-        identity = 0.3
-
-    if not facility:
-        provenance = 0.0
-    elif facility in cfg['trusted_facilities']:
-        provenance = 1.0
-    else:
-        provenance = 0.7
-
-    class _Rec:
-        pass
-    rec = _Rec()
-    rec.emirates_id = eid
-    rec.given_name = given
-    rec.family_name = family
-    rec.date_of_birth = dob
-    rec.canonical_id = canonical_id
-
-    cross_record = _cross_validator.validate(rec)
-
-    dims = {
-        'completeness': completeness,
-        'temporal': temporal,
-        'identity': identity,
-        'provenance': provenance,
-        'cross_record': cross_record,
-    }
-
-    # Weighted sum (raw). compute_trust_score returns a single float.
-    weighted_sum = compute_trust_score(**dims)
-
-    # Composite = weighted_sum × (0.4 + 0.6 × weakest_dimension)
-    # Matches the paper's soft-minimum floor formulation.
-    min_dim = min(dims.values())
-    composite = round(weighted_sum * (FLOOR + (1 - FLOOR) * min_dim), 4)
-
-    # Route on the composite score, unpack the (decision, reason) tuple.
-    decision, routing_reason = route_decision_hard(
-        composite, cross_record, THRESHOLD_AUTO, THRESHOLD_QUAR
-    )
-
-    explanation = 'Record is clean and trusted.'
-    primary_issue = 'None'
-    if decision in ('LINK_WITH_FLAG', 'QUARANTINE'):
-        weakest = min(dims, key=dims.get)
-        if weakest == 'cross_record':
-            if cross_record == 0.0:
-                explanation = f'Identifier collision: {cfg["id_label"]} {eid} is already registered to a different patient.'
-                primary_issue = 'Identifier Collision'
-            elif cross_record == 0.5:
-                explanation = 'Name and DOB match an existing patient, but the identifier differs.'
-                primary_issue = 'Potential Name/DOB Collision'
-        elif weakest == 'completeness':
-            missing = [f for f in required if not fields.get(f)]
-            explanation = f'Missing required fields: {", ".join(missing)}.'
-            primary_issue = 'Missing Demographics'
-        elif weakest == 'provenance':
-            explanation = f'Facility "{facility}" is not in the trusted tier.'
-            primary_issue = 'Untrusted Facility'
-        elif weakest == 'temporal':
-            explanation = f'Date of birth "{dob}" is invalid or outside the plausible range.'
-            primary_issue = 'Temporal Validity Error'
-        elif weakest == 'identity':
-            explanation = f'{cfg["id_label"]} format does not match region standard.'
-            primary_issue = 'Malformed Identifier'
-
-    _cross_validator.add_record(rec)
-
-    return {
-        'canonical_id': canonical_id,
-        'trust_score': composite,
-        'weighted_sum': round(weighted_sum, 4),
-        'min_dimension': round(min_dim, 4),
-        'decision': decision,
-        'routing_reason': routing_reason,
-        'dimensions': dims,
-        'primary_issue': primary_issue,
-        'explanation': explanation,
-        'config_version': 'v0.6.1',
-        'thresholds': {'auto': THRESHOLD_AUTO, 'quarantine': THRESHOLD_QUAR},
-    }
-
-
 @app.get('/health')
 def health():
     return {
         'status': 'ok',
-        'region': REGION_PROFILE,
-        'thresholds': {'auto': THRESHOLD_AUTO, 'quarantine': THRESHOLD_QUAR},
-        'config_version': 'v0.6.1',
+        'region': engine.region_profile,
+        'thresholds': {'auto': engine.threshold_auto, 'quarantine': engine.threshold_quar},
+        'config_version': 'v0.7.0',
         'auth_required': bool(API_KEY),
     }
-
 
 @app.post('/assess', response_model=Decision)
 def assess(payload: PatientInput, x_api_key: Optional[str] = Header(None)):
     _check_auth(x_api_key)
-    return _score_record(payload)
-
+    # Convert Pydantic model to plain dict for the engine
+    return engine.assess_record(payload.model_dump())
 
 @app.post('/assess-hl7', response_model=Decision)
 def assess_hl7(payload: HL7Input, x_api_key: Optional[str] = Header(None)):
@@ -303,34 +79,36 @@ def assess_hl7(payload: HL7Input, x_api_key: Optional[str] = Header(None)):
     ok, issues = validate_hl7_structure(payload.message)
     if not ok:
         raise HTTPException(status_code=400, detail=f'Invalid HL7 message: {"; ".join(issues)}')
+    
     parsed = parse_hl7_message(payload.message)
-    patient = PatientInput(
-        emirates_id=parsed.get('emirates_id'),
-        given_name=parsed.get('given_name', ''),
-        family_name=parsed.get('family_name', ''),
-        date_of_birth=parsed.get('date_of_birth', ''),
-        gender=parsed.get('gender', ''),
-        nationality=parsed.get('nationality', ''),
-        source_facility=parsed.get('source_facility', ''),
-        registration_date=parsed.get('registration_date', ''),
-        canonical_id=parsed.get('canonical_id', ''),
-    )
-    return _score_record(patient)
-
+    
+    # Map HL7 parsed output to the dictionary the engine expects
+    record_dict = {
+        'emirates_id': parsed.get('emirates_id'),
+        'given_name': parsed.get('given_name', ''),
+        'family_name': parsed.get('family_name', ''),
+        'date_of_birth': parsed.get('date_of_birth', ''),
+        'gender': parsed.get('gender', ''),
+        'nationality': parsed.get('nationality', ''),
+        'source_facility': parsed.get('source_facility', ''),
+        'registration_date': parsed.get('registration_date', ''),
+        'canonical_id': parsed.get('canonical_id', ''),
+    }
+    return engine.assess_record(record_dict)
 
 @app.post('/assess-batch')
 def assess_batch(payloads: List[PatientInput], x_api_key: Optional[str] = Header(None)):
     _check_auth(x_api_key)
-    return [_score_record(p) for p in payloads]
-
+    results = []
+    for p in payloads:
+        results.append(engine.assess_record(p.model_dump()))
+    return results
 
 @app.post('/reset')
 def reset_state(x_api_key: Optional[str] = Header(None)):
     _check_auth(x_api_key)
-    global _cross_validator
-    _cross_validator = _CrossRecordValidator()
+    engine.reset()
     return {'status': 'reset'}
-
 
 if __name__ == '__main__':
     import uvicorn
