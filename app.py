@@ -1,3 +1,5 @@
+from prometheus_client import Counter, generate_latest, CONTENT_TYPE_LATEST
+from fastapi.responses import Response
 # app.py
 import os
 from typing import List, Optional
@@ -18,6 +20,12 @@ engine = TrustEngine(
     region_profile=REGION_PROFILE,
     auto_threshold=THRESHOLD_AUTO,
     quar_threshold=THRESHOLD_QUAR
+)
+# Initialize Prometheus Metrics
+TRUST_DECISIONS = Counter(
+    'trust_gate_decisions_total', 
+    'Total number of routing decisions made', 
+    ['decision_type']
 )
 
 class PatientInput(BaseModel):
@@ -113,3 +121,6 @@ def reset_state(x_api_key: Optional[str] = Header(None)):
 if __name__ == '__main__':
     import uvicorn
     uvicorn.run(app, host='0.0.0.0', port=8000)
+    @app.get('/metrics')
+def metrics():
+    return Response(generate_latest(), media_type=CONTENT_TYPE_LATEST)
