@@ -137,15 +137,16 @@ def test_composite_score_with_collision():
 
 
 def test_router_auto_link():
-    assert route_decision(0.95) == "AUTO_LINK"
-
+    decision, reason = route_decision(0.95)
+    assert decision == "AUTO_LINK"
 
 def test_router_flag():
-    assert route_decision(0.70) == "LINK_WITH_FLAG"
-
+    decision, reason = route_decision(0.70)
+    assert decision == "LINK_WITH_FLAG"
 
 def test_router_quarantine():
-    assert route_decision(0.30) == "QUARANTINE"
+    decision, reason = route_decision(0.30)
+    assert decision == "QUARANTINE"
 
 def test_hl7v2_parsing():
     import sys, os
