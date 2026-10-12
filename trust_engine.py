@@ -1,3 +1,4 @@
+from database import AuditDatabase
 # trust_engine.py
 import re
 
