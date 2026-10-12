@@ -1,11 +1,11 @@
-from prometheus_client import Counter, generate_latest, CONTENT_TYPE_LATEST
-from fastapi.responses import Response
 # app.py
 import os
 from typing import List, Optional
 
 from fastapi import FastAPI, Header, HTTPException
+from fastapi.responses import Response
 from pydantic import BaseModel
+from prometheus_client import Counter, generate_latest, CONTENT_TYPE_LATEST
 
 from trust_engine import TrustEngine
 from trust_layer.hl7_ingest import parse_hl7_message, validate_hl7_structure
@@ -21,6 +21,7 @@ engine = TrustEngine(
     auto_threshold=THRESHOLD_AUTO,
     quar_threshold=THRESHOLD_QUAR
 )
+
 # Initialize Prometheus Metrics
 TRUST_DECISIONS = Counter(
     'trust_gate_decisions_total', 
@@ -58,7 +59,7 @@ class Decision(BaseModel):
 app = FastAPI(
     title='Identity Trust Assessment API',
     description='Pre-submission record trust gate for patient identity resolution and claim readiness in HIEs.',
-    version='v0.7.0', # Bumped version for the refactor
+    version='v0.7.0',
 )
 
 def _check_auth(x_api_key):
@@ -75,11 +76,20 @@ def health():
         'auth_required': bool(API_KEY),
     }
 
+@app.get('/metrics')
+def metrics():
+    return Response(generate_latest(), media_type=CONTENT_TYPE_LATEST)
+
 @app.post('/assess', response_model=Decision)
 def assess(payload: PatientInput, x_api_key: Optional[str] = Header(None)):
     _check_auth(x_api_key)
     # Convert Pydantic model to plain dict for the engine
-    return engine.assess_record(payload.model_dump())
+    result = engine.assess_record(payload.model_dump())
+    
+    # Click the Prometheus tally
+    TRUST_DECISIONS.labels(decision_type=result['decision']).inc()
+    
+    return result
 
 @app.post('/assess-hl7', response_model=Decision)
 def assess_hl7(payload: HL7Input, x_api_key: Optional[str] = Header(None)):
@@ -102,14 +112,25 @@ def assess_hl7(payload: HL7Input, x_api_key: Optional[str] = Header(None)):
         'registration_date': parsed.get('registration_date', ''),
         'canonical_id': parsed.get('canonical_id', ''),
     }
-    return engine.assess_record(record_dict)
+    
+    result = engine.assess_record(record_dict)
+    
+    # Click the Prometheus tally
+    TRUST_DECISIONS.labels(decision_type=result['decision']).inc()
+    
+    return result
 
 @app.post('/assess-batch')
 def assess_batch(payloads: List[PatientInput], x_api_key: Optional[str] = Header(None)):
     _check_auth(x_api_key)
     results = []
     for p in payloads:
-        results.append(engine.assess_record(p.model_dump()))
+        res = engine.assess_record(p.model_dump())
+        
+        # Click the Prometheus tally for each record
+        TRUST_DECISIONS.labels(decision_type=res['decision']).inc()
+        
+        results.append(res)
     return results
 
 @app.post('/reset')
@@ -121,6 +142,3 @@ def reset_state(x_api_key: Optional[str] = Header(None)):
 if __name__ == '__main__':
     import uvicorn
     uvicorn.run(app, host='0.0.0.0', port=8000)
-    @app.get('/metrics')
-def metrics():
-    return Response(generate_latest(), media_type=CONTENT_TYPE_LATEST)
