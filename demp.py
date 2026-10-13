@@ -172,7 +172,7 @@ def decision_chart(df, decision_col='Decision', count_col='Count', height=240):
     domain = [DECISION_LABELS[k] for k in DECISION_LABELS]
     rng = [DECISION_COLORS[k] for k in DECISION_LABELS]
     return alt.Chart(df).mark_bar(cornerRadiusEnd=4, size=18).encode(x=alt.X(f'{count_col}:Q', title='Records', axis=alt.Axis(grid=True, gridColor='#E9E3D6', domain=False)), y=alt.Y(f'{decision_col}:N', sort='-x', title='', axis=alt.Axis(domain=False, ticks=False)), color=alt.Color(f'{decision_col}:N', scale=alt.Scale(domain=domain, range=rng), legend=None), tooltip=[decision_col, count_col]).properties(height=height).configure(background='transparent').configure_view(strokeWidth=0).configure_axis(**_AX)
-# ============================================================
+    # ============================================================
 # Part 2: Dashboard & HL7 Stream (API-First)
 # ============================================================
 import sqlite3
@@ -387,7 +387,7 @@ def pg_hl7():
             hist_df['decision'] = hist_df['decision'].map(lambda d: ui.DECISION_LABELS.get(d, d))
             hist_df.columns = ['Message #', 'Record ID', 'Outcome', 'Trust Score', 'Main Issue']
             st.dataframe(hist_df, use_container_width=True, hide_index=True)
-# ============================================================
+            # ============================================================
 # Part 3: Batch Upload, Flagged Records, Audit Trail, Router
 # ============================================================
 
