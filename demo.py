@@ -7,6 +7,12 @@ import pandas as pd
 import altair as alt
 import streamlit as st
 from datetime import datetime
+st.set_page_config(
+    page_title='Identity Trust Assessment',
+    page_icon=':material/health_and_safety:',
+    layout='wide',
+    initial_sidebar_state='expanded',
+)
 
 # ============================================================
 # Configuration
