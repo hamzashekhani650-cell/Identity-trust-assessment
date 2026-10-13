@@ -11,6 +11,7 @@ from datetime import datetime
 import types
 import html as _html
 from datetime import datetime as _dt
+from trust_layer.validators import CrossRecordValidator
 
 # ============================================================
 # Page Config (Must be first Streamlit command)
@@ -342,24 +343,6 @@ def run_assessment(file_bytes, region_name):
     cv = CrossRecordValidator() # Note: Imported or defined locally
     results = []
     audit_entries = []
-
-    # Local CrossRecordValidator fallback if not imported
-    if 'CrossRecordValidator' not in globals():
-        class CrossRecordValidator:
-            def __init__(self): self.identifier_index = {}; self.name_dob_index = {}
-            def add_record(self, record):
-                if getattr(record, 'emirates_id', None): self.identifier_index.setdefault(record.emirates_id, set()).add(record.canonical_id)
-                key = ((getattr(record, 'given_name', '') or '').strip().lower(), (getattr(record, 'family_name', '') or '').strip().lower(), getattr(record, 'date_of_birth', '') or '')
-                if key != ('', '', ''): self.name_dob_index.setdefault(key, set()).add(record.canonical_id)
-            def validate(self, record):
-                eid = getattr(record, 'emirates_id', None)
-                if eid and eid in self.identifier_index:
-                    if record.canonical_id not in self.identifier_index[eid]: return 0.0
-                key = ((getattr(record, 'given_name', '') or '').strip().lower(), (getattr(record, 'family_name', '') or '').strip().lower(), getattr(record, 'date_of_birth', '') or '')
-                if key != ('', '', '') and key in self.name_dob_index:
-                    if record.canonical_id not in self.name_dob_index[key]: return 0.5
-                return 1.0
-        cv = CrossRecordValidator()
 
     for index, row in df.iterrows():
         rec = Record(
