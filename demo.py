@@ -182,6 +182,7 @@ def decision_chart(df, decision_col='Decision', count_col='Count', height=240):
 import types
 
 ui = types.SimpleNamespace(
+    ui.inject_css()
     ACCENT=ACCENT,
     BAD=BAD,
     DECISION_COLORS=DECISION_COLORS,
