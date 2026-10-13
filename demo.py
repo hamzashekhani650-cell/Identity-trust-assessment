@@ -173,6 +173,29 @@ def decision_chart(df, decision_col='Decision', count_col='Count', height=240):
     rng = [DECISION_COLORS[k] for k in DECISION_LABELS]
     return alt.Chart(df).mark_bar(cornerRadiusEnd=4, size=18).encode(x=alt.X(f'{count_col}:Q', title='Records', axis=alt.Axis(grid=True, gridColor='#E9E3D6', domain=False)), y=alt.Y(f'{decision_col}:N', sort='-x', title='', axis=alt.Axis(domain=False, ticks=False)), color=alt.Color(f'{decision_col}:N', scale=alt.Scale(domain=domain, range=rng), legend=None), tooltip=[decision_col, count_col]).properties(height=height).configure(background='transparent').configure_view(strokeWidth=0).configure_axis(**_AX)
     # ============================================================
+import types
+
+ui = types.SimpleNamespace(
+    ACCENT=ACCENT,
+    BAD=BAD,
+    DECISION_COLORS=DECISION_COLORS,
+    DECISION_LABELS=DECISION_LABELS,
+    NEUTRAL=NEUTRAL,
+    OK=OK,
+    TEAL=TEAL,
+    WARN=WARN,
+    badge=badge,
+    bar_chart=bar_chart,
+    callout=callout,
+    decision_chart=decision_chart,
+    dimension_bar=dimension_bar,
+    hero=hero,
+    inject_css=inject_css,
+    kpi=kpi,
+    sidebar_brand=sidebar_brand,
+    sidebar_note=sidebar_note,
+    steps=steps,
+)
 # Part 2: Dashboard & HL7 Stream (API-First)
 # ============================================================
 import sqlite3
