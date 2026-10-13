@@ -206,26 +206,7 @@ ui = types.SimpleNamespace(
 )
 
 ui.inject_css()
-    ACCENT=ACCENT,
-    BAD=BAD,
-    DECISION_COLORS=DECISION_COLORS,
-    DECISION_LABELS=DECISION_LABELS,
-    NEUTRAL=NEUTRAL,
-    OK=OK,
-    TEAL=TEAL,
-    WARN=WARN,
-    badge=badge,
-    bar_chart=bar_chart,
-    callout=callout,
-    decision_chart=decision_chart,
-    dimension_bar=dimension_bar,
-    hero=hero,
-    inject_css=inject_css,
-    kpi=kpi,
-    sidebar_brand=sidebar_brand,
-    sidebar_note=sidebar_note,
-    steps=steps,
-)
+
 # Part 2: Dashboard & HL7 Stream (API-First)
 # ============================================================
 import sqlite3
