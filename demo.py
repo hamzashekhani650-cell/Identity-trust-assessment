@@ -725,10 +725,23 @@ def pg_batch():
     ui.hero('Batch Upload')
     st.caption('Upload a CSV of patient records. The schema mapper handles arbitrary column names, and the pipeline processes whatever identity, clinical, and governance fields are present.')
 
-    st.markdown("**Quick start**")
+   st.markdown("**Quick start**")
     if st.button('Run a demo batch now (100 synthetic records)', type='primary'):
         load_demo_batch()
         st.switch_page(PAGES['dashboard'])
+
+    st.divider()
+    st.markdown("**Generate a sample**")
+    col_a, col_b = st.columns([1, 1])
+    with col_a:
+        if st.button(f'Generate {st.session_state["region_name"]} Sample (100 records)'):
+            sample_df = generate_sample(st.session_state['region_name'], n=100)
+            st.download_button(
+                label='Download Generated Sample',
+                data=sample_df.to_csv(index=False).encode('utf-8'),
+                file_name=f'sample_{st.session_state["region_name"].split()[0].lower()}_100.csv',
+                mime='text/csv',
+            )
 
     st.divider()
     st.markdown("**Generate a sample**")
