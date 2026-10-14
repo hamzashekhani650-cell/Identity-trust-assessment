@@ -1237,7 +1237,7 @@ def pg_report():
     results_df, meta, df_meta, clinical_df, clinical_meta, drg_df, drg_meta, gov_df, gov_meta, schema = result
     info = st.session_state.get('batch_info')
 
-    report_html = ui.build_report_html(info, st.session_state['region_name'], _get_config(), results_df, schema, clinical_meta, drg_meta, gov_meta)
+    report_html = build_report_html(info, st.session_state['region_name'], _get_config(), results_df, schema, clinical_meta, drg_meta, gov_meta)
 
     st.download_button(label='Download report (HTML, print to PDF)', data=report_html.encode('utf-8'), file_name=f'data_quality_report_{datetime.now().strftime("%Y%m%d_%H%M")}.html', mime='text/html', type='primary')
 
