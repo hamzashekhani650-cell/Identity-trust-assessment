@@ -8,14 +8,6 @@ import pandas as pd
 import altair as alt
 import streamlit as st
 import html as _html
-st.set_page_config(
-    page_title='Identity Trust Assessment',
-    page_icon=':material/health_and_safety:',
-    layout='wide',
-    initial_sidebar_state='expanded',
-)
-
-inject_css()
 from datetime import datetime
 from trust_layer.scoring import compute_trust_score
 from trust_layer.router import route_decision_hard
@@ -288,6 +280,14 @@ ui = types.SimpleNamespace(
     dimension_bar=dimension_bar, hero=hero, inject_css=inject_css, kpi=kpi,
     sidebar_brand=sidebar_brand, sidebar_note=sidebar_note, steps=steps,
 )
+st.set_page_config(
+    page_title='Identity Trust Assessment',
+    page_icon=':material/health_and_safety:',
+    layout='wide',
+    initial_sidebar_state='expanded',
+)
+
+inject_css()
 
 # ============================================================
 # Constants
