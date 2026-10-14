@@ -8,6 +8,14 @@ import pandas as pd
 import altair as alt
 import streamlit as st
 import html as _html
+st.set_page_config(
+    page_title='Identity Trust Assessment',
+    page_icon=':material/health_and_safety:',
+    layout='wide',
+    initial_sidebar_state='expanded',
+)
+
+ui.inject_css()
 from datetime import datetime
 from trust_layer.scoring import compute_trust_score
 from trust_layer.router import route_decision_hard
