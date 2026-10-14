@@ -816,7 +816,8 @@ def build_report_html(info, region_name, config, results_df, schema,
     total = len(results_df)
     label, color = batch_status(results_df)
     now = datetime.now().strftime('%d %b %Y, %H:%M')
-rid = datetime.now().strftime('ITA-%Y%m%d-%H%M')
+    rid = 
+    datetime.now().strftime('ITA-%Y%m%d-%H%M')
     counts = results_df['decision'].value_counts().to_dict()
     rows = ''.join(
         f'<tr><td>{e(DECISION_LABELS[k])}</td><td class="n">{counts.get(k, 0):,}</td>'
