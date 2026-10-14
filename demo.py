@@ -9,7 +9,22 @@ import altair as alt
 import streamlit as st
 import html as _html
 from datetime import datetime, _dt
-
+from trust_layer.scoring import compute_trust_score
+from trust_layer.router import route_decision_hard
+from trust_layer.validators import CrossRecordValidator
+from trust_layer.audit import log_batch, verify_chain
+from trust_layer.coding_validators import assess_record, find_duplicate_episodes
+from trust_layer.drg_validators import assess_drg_readiness
+from trust_layer.mds_validators import check_mds_completeness
+from trust_layer.consent_validators import validate_consent
+from trust_layer.schema_mapper import map_columns, CANONICAL_FIELDS, detect_output_file
+from trust_layer.sample_generator import generate_sample
+try:
+    from trust_layer.prior_auth_validators import validate_preauth
+    PA_AVAILABLE = True
+except ImportError:
+    PA_AVAILABLE = False
+    
 # ============================================================
 # API Integration Configuration (NEW - for Render Backend)
 # ============================================================
