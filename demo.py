@@ -15,7 +15,7 @@ st.set_page_config(
     initial_sidebar_state='expanded',
 )
 
-ui.inject_css()
+inject_css()
 from datetime import datetime
 from trust_layer.scoring import compute_trust_score
 from trust_layer.router import route_decision_hard
