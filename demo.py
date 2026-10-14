@@ -189,7 +189,7 @@ def get_recent_decisions(limit=200):
         return pd.DataFrame()
 
 def pg_dashboard():
-    ui.hero('Dashboard')
+    hero('Dashboard')
     st.caption('Live overview of patient records processed by the Trust Gate API, MLLP Listener, and SFTP Poller.')
 
     # 1. Fetch live data from the database
@@ -200,7 +200,7 @@ def pg_dashboard():
         
         # Still show the quick start guides
         st.markdown("### How to populate this dashboard")
-        ui.steps([
+        steps([
             ('Send an HL7 message', 'Go to the HL7 Stream tab and paste a message to send it to the API.'),
             ('Run a batch process', 'Place a CSV in the sftp_input folder to trigger the poller.'),
             ('Check the audit log', 'Every decision is permanently saved to audit_log.db.'),
@@ -219,15 +219,15 @@ def pg_dashboard():
     # 3. Display KPIs
     c1, c2, c3, c4, c5 = st.columns(5)
     with c1:
-        ui.kpi('Total Records', f'{total:,}', ui.TEAL, 'in this view')
+        kpi('Total Records', f'{total:,}', TEAL, 'in this view')
     with c2:
-        ui.kpi('Auto-linked', f'{auto:,}', ui.OK, 'trusted, no action')
+        kpi('Auto-linked', f'{auto:,}', OK, 'trusted, no action')
     with c3:
-        ui.kpi('Flagged', f'{flagged:,}', ui.WARN, 'review recommended')
+        kpi('Flagged', f'{flagged:,}', WARN, 'review recommended')
     with c4:
-        ui.kpi('Quarantined', f'{quarantined:,}', ui.BAD, 'hold from exchange')
+        kpi('Quarantined', f'{quarantined:,}', BAD, 'hold from exchange')
     with c5:
-        ui.kpi('Insufficient data', f'{insufficient:,}', ui.NEUTRAL, 'cannot be scored')
+        kpi('Insufficient data', f'{insufficient:,}', NEUTRAL, 'cannot be scored')
 
     st.divider()
 
@@ -237,22 +237,22 @@ def pg_dashboard():
         st.markdown("**Decision Breakdown**")
         dc = db_df['decision'].value_counts().reset_index()
         dc.columns = ['Decision', 'Count']
-        dc['Decision'] = dc['Decision'].map(lambda d: ui.DECISION_LABELS.get(d, d))
-        st.altair_chart(ui.decision_chart(dc, height=250), use_container_width=True)
+        dc['Decision'] = dc['Decision'].map(lambda d: DECISION_LABELS.get(d, d))
+        st.altair_chart(decision_chart(dc, height=250), use_container_width=True)
 
     with col_b:
         st.markdown("**Top Primary Issues**")
         issues = db_df[db_df['primary_issue'] != 'None']['primary_issue'].value_counts().reset_index()
         issues.columns = ['Issue', 'Count']
         if not issues.empty:
-            st.altair_chart(ui.bar_chart(issues, 'Count', 'Issue', color=ui.BAD, height=250), use_container_width=True)
+            st.altair_chart(bar_chart(issues, 'Count', 'Issue', color=BAD, height=250), use_container_width=True)
         else:
             st.success("No issues detected in recent records.")
 
     # 5. Recent Records Table
     st.markdown("### Recent Decisions")
     display_df = db_df[['timestamp', 'canonical_id', 'trust_score', 'decision', 'primary_issue']].copy()
-    display_df['decision'] = display_df['decision'].map(lambda d: ui.DECISION_LABELS.get(d, d))
+    display_df['decision'] = display_df['decision'].map(lambda d: DECISION_LABELS.get(d, d))
     display_df.columns = ['Timestamp', 'Record ID', 'Trust Score', 'Outcome', 'Main Issue']
     
     st.dataframe(
@@ -269,7 +269,7 @@ def pg_dashboard():
 
 
 def pg_hl7():
-    ui.hero('HL7 Stream')
+    hero('HL7 Stream')
     st.caption('Paste one or more HL7 v2 ADT messages below. Each message is sent to the FastAPI backend, scored against the five identity dimensions, and routed in real-time.')
 
     st.info('In production, messages arrive continuously from the hospital interface engine via MLLP (port 6661). This page simulates that incoming flow.')
@@ -349,10 +349,10 @@ def pg_hl7():
                     
                     cc1, cc2 = st.columns(2)
                     cc1.metric('Composite Trust Score', f"{result['trust_score']:.3f}")
-                    cc2.metric('Decision', ui.DECISION_LABELS.get(decision, decision))
+                    cc2.metric('Decision', DECISION_LABELS.get(decision, decision))
                     
                     m_title, m_text = DECISION_MEANING.get(decision, ('', ''))
-                    ui.callout(m_title, m_text, ui.DECISION_COLORS.get(decision, ui.TEAL))
+                    callout(m_title, m_text, DECISION_COLORS.get(decision, TEAL))
                     
                     if decision in ('LINK_WITH_FLAG', 'QUARANTINE'):
                         if result['dimensions']['cross_record'] == 0.0:
@@ -365,7 +365,7 @@ def pg_hl7():
                         for label, key in [('Completeness', 'completeness'), ('Temporal', 'temporal'),
                                            ('Identity', 'identity'), ('Provenance', 'provenance'),
                                            ('Cross-Record', 'cross_record')]:
-                            ui.dimension_bar(label, result['dimensions'][key])
+                            dimension_bar(label, result['dimensions'][key])
                             
                     st.session_state['hl7_history'].append({
                         'msg_index': i + 1,
@@ -384,7 +384,7 @@ def pg_hl7():
             st.divider()
             st.markdown('### Session History')
             hist_df = pd.DataFrame(st.session_state['hl7_history'])
-            hist_df['decision'] = hist_df['decision'].map(lambda d: ui.DECISION_LABELS.get(d, d))
+            hist_df['decision'] = hist_df['decision'].map(lambda d: DECISION_LABELS.get(d, d))
             hist_df.columns = ['Message #', 'Record ID', 'Outcome', 'Trust Score', 'Main Issue']
             st.dataframe(hist_df, use_container_width=True, hide_index=True)
 # ============================================================
@@ -392,7 +392,7 @@ def pg_hl7():
 # ============================================================
 
 def pg_batch():
-    ui.hero('Batch Upload')
+    hero('Batch Upload')
     st.caption('Upload a CSV of patient records. The file is sent to the FastAPI backend for scoring.')
 
     st.info('In production, this is handled automatically by the SFTP Poller. This tab is for manual pre-pilot testing.')
@@ -448,7 +448,7 @@ def pg_batch():
 
 
 def pg_flagged():
-    ui.hero('Flagged Records')
+    hero('Flagged Records')
     st.caption('Records routed for manual review by the Trust Gate API.')
 
     batch_results = st.session_state.get('batch_results')
@@ -474,8 +474,8 @@ def pg_flagged():
     st.caption(f"Showing {len(flagged)} of {len(df)} records.")
 
     for _, row in flagged.iterrows():
-        with st.expander(f"{row['canonical_id']} · {row.get('given_name', '')} {row.get('family_name', '')} · {ui.DECISION_LABELS.get(row['decision'], row['decision'])}"):
-            st.markdown(ui.badge(row['decision']), unsafe_allow_html=True)
+        with st.expander(f"{row['canonical_id']} · {row.get('given_name', '')} {row.get('family_name', '')} · {DECISION_LABELS.get(row['decision'], row['decision'])}"):
+            st.markdown(badge(row['decision']), unsafe_allow_html=True)
             st.write(f"**Composite Trust Score:** {row['trust_score']:.3f}")
             st.write(f"**Primary Issue:** {row['primary_issue']}")
             st.info(f"{row['explanation']}")
@@ -488,7 +488,7 @@ def pg_flagged():
                                    ('Identity', 'identity'), ('Provenance', 'provenance'),
                                    ('Cross-Record', 'cross_record')]:
                     if key in dims:
-                        ui.dimension_bar(label, dims[key])
+                        dimension_bar(label, dims[key])
     
     st.download_button(
         label='Download Flagged Records (CSV)',
@@ -499,7 +499,7 @@ def pg_flagged():
 
 
 def pg_audit():
-    ui.hero('Audit Trail')
+    hero('Audit Trail')
     st.caption('A permanent record of every decision made by the Trust Gate API, MLLP Listener, and SFTP Poller.')
 
     try:
@@ -516,17 +516,17 @@ def pg_audit():
 
     k1, k2, k3 = st.columns(3)
     with k1:
-        ui.kpi('Total Decisions Logged', f'{len(log_df):,}', ui.TEAL, 'entries in the database')
+        kpi('Total Decisions Logged', f'{len(log_df):,}', TEAL, 'entries in the database')
     with k2:
         quarantined = len(log_df[log_df['decision'] == 'QUARANTINE'])
-        ui.kpi('Total Quarantined', f'{quarantined:,}', ui.BAD, 'held from exchange')
+        kpi('Total Quarantined', f'{quarantined:,}', BAD, 'held from exchange')
     with k3:
         last_entry = log_df.iloc[0]['timestamp'] if not log_df.empty else 'N/A'
-        ui.kpi('Last Entry', last_entry[:16] if last_entry != 'N/A' else 'N/A', ui.TEAL, 'most recent decision')
+        kpi('Last Entry', last_entry[:16] if last_entry != 'N/A' else 'N/A', TEAL, 'most recent decision')
 
     st.markdown("### Raw Audit Log")
     display_df = log_df[['timestamp', 'canonical_id', 'trust_score', 'decision', 'primary_issue']].copy()
-    display_df['decision'] = display_df['decision'].map(lambda d: ui.DECISION_LABELS.get(d, d))
+    display_df['decision'] = display_df['decision'].map(lambda d: DECISION_LABELS.get(d, d))
     display_df.columns = ['Timestamp', 'Record ID', 'Trust Score', 'Outcome', 'Main Issue']
 
     st.dataframe(display_df, use_container_width=True, hide_index=True)
@@ -540,7 +540,7 @@ def pg_audit():
 
 
 def pg_about():
-    ui.hero('About')
+    hero('About')
     st.markdown('''
     ### What this tool does
     A pre-submission trust gate for patient records in a health information exchange. 
@@ -583,8 +583,8 @@ pages = {
 }
 
 with st.sidebar:
-    ui.sidebar_brand(st.session_state.get('region_name', 'UAE (DOH)'))
-    ui.sidebar_note()
+    sidebar_brand(st.session_state.get('region_name', 'UAE (DOH)'))
+    sidebar_note()
 
 pg = st.navigation(pages)
 pg.run()
