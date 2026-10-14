@@ -13,3 +13,5 @@ httpx
 pytest
 pylint
 prometheus-client
+altair
+requests
