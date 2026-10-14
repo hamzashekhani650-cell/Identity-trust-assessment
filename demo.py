@@ -8,7 +8,7 @@ import pandas as pd
 import altair as alt
 import streamlit as st
 import html as _html
-from datetime import datetime, _dt
+from datetime import datetime
 from trust_layer.scoring import compute_trust_score
 from trust_layer.router import route_decision_hard
 from trust_layer.validators import CrossRecordValidator
