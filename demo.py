@@ -11,8 +11,8 @@ from datetime import datetime
 # ============================================================
 # Configuration
 # ============================================================
-API_BASE_URL = "http://localhost:8000" # Your FastAPI backend
-API_KEY = "" # Leave blank if no key is set, otherwise put your key here
+API_BASE_URL = "https://identity-trust-api.onrender.com" # Your FastAPI backend
+API_KEY = "YOUR_API_KEY_HERE" # <-- Put the same API Key you set in Render's Environment tab
 
 # ============================================================
 # UI Theme (Inlined)
