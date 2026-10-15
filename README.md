@@ -7,25 +7,17 @@
 
 ---
 
-## The Problem
-
 Health information exchanges link patient records across hospitals, clinics, and labs. When two different patients share the same identifier (Emirates ID, MRN, insurance number), pairwise matchers link them incorrectly. One patient's medical history attaches to another's. This is a silent data corruption that can have severe clinical and financial consequences.
 
-## The Solution
+The Identity Trust Assessment framework solves this by scoring every incoming patient record **before** any linkage decision is made. It evaluates five dimensions—Completeness, Temporal Validity, Identity Consistency, Provenance, and Cross-Record Consistency—and routes each record to **Auto-Link**, **Flag-for-Review**, or **Quarantine**, with a plain-language reason for every decision. 
 
-A five-dimension trust assessment framework that scores every incoming patient record **before** any linkage decision is made. The composite score routes each record to **Auto-Link**, **Flag-for-Review**, or **Quarantine**, with a plain-language reason for every decision.
+This is particularly critical for the UAE, a hyper-diverse country where patients arrive with names and identifiers transliterated from dozens of languages. The potential for identity collisions in platforms like **Malaffi** and **NABIDH** is immense, making this tool not just helpful, but necessary for the reliability of connected health systems.
 
-The framework is deployed as a **FastAPI backend** for hospital integration and a **Streamlit dashboard** for data quality teams.
+The project is built as a **FastAPI backend** for hospital integration and a **Streamlit dashboard** for data quality teams. It is fully containerized, meaning it can be deployed entirely on-premise inside a hospital's private network.
 
-### The Five Dimensions
+### Architecture & Data Flow
 
-1.  **Completeness** – are required identity fields present?
-2.  **Temporal Validity** – do the dates make sense?
-3.  **Identity Consistency** – do identifiers agree with demographics?
-4.  **Provenance** – is the source facility trusted?
-5.  **Cross-Record Consistency** – does this record collide with an existing identity?
-
-## Architecture
+The system operates as a secure middleware layer. Hospital IT systems send HL7 v2 ADT messages or CSV batches to a local Docker container. The FastAPI backend parses these messages, calls the trust engine, and writes every decision to a persistent PostgreSQL database. A separate Streamlit dashboard then reads from this database to provide a live view of the audit trail and flagged records.
 
 ```mermaid
 flowchart TD
@@ -39,13 +31,11 @@ flowchart TD
         UI[Streamlit Dashboard<br/>Data Quality & Compliance Team]
     end
 
-    %% Data Flow
     HIS -->|"HL7 v2 ADT / CSV Batch"| Docker
     Docker -->|"Scores & Routes"| DB
     DB -->|"Reads Audit Trail"| UI
     UI -.->|"Sends Test Messages"| Docker
 
-    %% Styling
     classDef hospital fill:#f0f4f8,stroke:#4a5568,stroke-width:2px,color:#2d3748
     classDef docker fill:#e6fffa,stroke:#319795,stroke-width:2px,color:#234e52
     classDef database fill:#fffaf0,stroke:#dd6b20,stroke-width:2px,color:#7b341e
