@@ -15,3 +15,4 @@ pylint
 prometheus-client
 altair
 requests
+psycopg2-binary
