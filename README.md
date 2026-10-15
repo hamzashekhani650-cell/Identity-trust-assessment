@@ -27,106 +27,31 @@ The framework is deployed as a **FastAPI backend** for hospital integration and 
 
 ## Architecture
 
-┌─────────────┐      ┌─────────────────┐      ┌─────────────────┐      ┌─────────────────┐
-│  Hospital   │      │   FastAPI       │      │   Trust Engine  │      │   PostgreSQL    │
-│  Interface  │─────▶│   Backend       │─────▶│   (5-Dimension  │─────▶│   (Neon)        │
-│  Engine     │      │   (Render)      │      │   Scoring)      │      │   Audit Log     │
-└─────────────┘      └─────────────────┘      └─────────────────┘      └─────────────────┘
-                            ▲
-                            │
-                     ┌─────────────┐
-                     │  Streamlit  │
-                     │  Dashboard  │
-                     │  (Cloud)    │
-                     └─────────────┘
+```mermaid
+flowchart TD
+    subgraph Hospital_Network ["🏥 Hospital Network (On-Premise / Private Cloud)"]
+        HIS[Hospital Interface Engine<br/>Mirth Connect / EMR]
+        Docker[<b>Docker Container</b><br/>FastAPI + Trust Engine]
+    end
 
-- **Hospital IT** sends HL7 v2 ADT messages via MLLP or SFTP batches.
-- **FastAPI Backend** parses the message and calls the trust engine.
-- **Trust Engine** scores the record across five dimensions and routes it.
-- **PostgreSQL** stores every decision in a persistent, audit-ready database.
-- **Streamlit Dashboard** provides a live view of the audit trail and flagged records.
+    subgraph Managed_Cloud ["☁️ Managed Cloud Services"]
+        DB[(PostgreSQL Database<br/>Neon / Persistent Audit Log)]
+        UI[Streamlit Dashboard<br/>Data Quality & Compliance Team]
+    end
 
-## Results
+    %% Data Flow
+    HIS -->|"HL7 v2 ADT / CSV Batch"| Docker
+    Docker -->|"Scores & Routes"| DB
+    DB -->|"Reads Audit Trail"| UI
+    UI -.->|"Sends Test Messages"| Docker
 
-- Collision rejection: **96.0%** Gulf, **92.6%** Australia (vs. 53.4% / 30.7% for Fellegi-Sunter)
-- Non-overlapping 95% confidence intervals in both contexts
-- Fairness audit (n=2,000, six nationality groups): chi-squared = 7.25, p = 0.203 (no significant bias)
-- Fellegi-Sunter comparator externally validated on Febrl1 benchmark (F1 = 0.862)
+    %% Styling
+    classDef hospital fill:#f0f4f8,stroke:#4a5568,stroke-width:2px,color:#2d3748
+    classDef docker fill:#e6fffa,stroke:#319795,stroke-width:2px,color:#234e52
+    classDef database fill:#fffaf0,stroke:#dd6b20,stroke-width:2px,color:#7b341e
+    classDef dashboard fill:#ebf4ff,stroke:#3182ce,stroke-width:2px,color:#2a4365
 
-## Live Deployments
-
-- **Streamlit Dashboard**: [https://identity-trust-assessment-ccyev5krcnjabjkd24eu5y.streamlit.app/](https://identity-trust-assessment-ccyev5krcnjabjkd24eu5y.streamlit.app/)
-- **FastAPI Backend (Swagger UI)**: [https://identity-trust-api.onrender.com/docs](https://identity-trust-api.onrender.com/docs)
-
-## Project Structure
-
-trust_layer/ Python package
-├── record.py PatientRecord data structure
-├── validators.py Five validators + CrossRecordValidator
-├── scoring.py Composite trust score
-├── router.py Decision routing
-├── audit.py Hash-chained audit log
-├── hl7v2.py HL7v2 ADT message parser
-├── fhir.py Generic FHIR adapter
-├── abdm.py ABDM (India) adapter
-├── aucore.py AU Core (Australia) adapter
-├── nphies.py Nphies (Saudi Arabia) adapter
-app.py FastAPI backend
-demo.py Streamlit dashboard
-database.py PostgreSQL connection & audit log
-Dockerfile Container configuration
-docker-compose.yml Full-stack local deployment
-requirements.txt Python dependencies
-examples/ Sample HL7 and FHIR records
-
-## Installation
-
-pip install -r requirements.txt
-
-## Running Locally
-
-1.  Start the FastAPI backend:
-    ```bash
-    uvicorn app:app --reload --host 0.0.0.0 --port 8000
-    ```
-2.  Start the Streamlit dashboard:
-    ```bash
-    streamlit run demo.py
-    ```
-
-## API Endpoints
-
-| Endpoint | Method | Description |
-|---|---|---|
-| `/health` | GET | Health check and configuration |
-| `/metrics` | GET | Prometheus metrics |
-| `/assess` | POST | Assess a single patient record (JSON) |
-| `/assess-hl7` | POST | Assess an HL7 v2 ADT message |
-| `/assess-batch` | POST | Assess a batch of records (CSV/JSON) |
-| `/reset` | POST | Reset the in-memory state |
-
-## Supported Input Formats
-
-- HL7 FHIR Patient resources
-- HL7 v2 ADT messages (PID segment)
-- ABDM (India) FHIR profiles
-- AU Core (Australia) FHIR profiles
-- Nphies (Saudi Arabia) FHIR profiles
-
-## Paper & Recognition
-
-This project is based on the research paper:
-
-> **Decoupling Record Trust from Record Linkage: A Dual-Stage Architecture for Hyper-Diverse Health Information Exchanges**
-> 
-> Published as a preprint on Zenodo: [https://zenodo.org/records/22770188](https://zenodo.org/records/22770188)
-> 
-> Selected as a **top-15 finalist (out of 120+ submissions)** at the AIMed26 Abstract Competition.
-
-## License
-
-MIT
-
-## Contact
-
-**Hamza Shekhani** – [hamzashekhani650@gmail.com](mailto:hamzashekhani650@gmail.com)
+    class HIS hospital
+    class Docker docker
+    class DB database
+    class UI dashboard
