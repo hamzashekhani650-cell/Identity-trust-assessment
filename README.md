@@ -33,12 +33,12 @@ The UAE is a uniquely hyper-diverse country where patients arrive with names and
 
 ```mermaid
 flowchart TD
-    subgraph Hospital_Network ["🏥 Hospital Network (On-Premise / Private Cloud)"]
+    subgraph Hospital_Network ["Hospital Network (On-Premise / Private Cloud)"]
         HIS[Hospital Interface Engine<br/>Mirth Connect / EMR]
         Docker[<b>Docker Container</b><br/>FastAPI + Trust Engine]
     end
 
-    subgraph Managed_Cloud ["☁️ Managed Cloud Services"]
+    subgraph Managed_Cloud ["Managed Cloud Services"]
         DB[(PostgreSQL Database<br/>Neon / Persistent Audit Log)]
         UI[Streamlit Dashboard<br/>Data Quality & Compliance Team]
     end
@@ -65,7 +65,7 @@ flowchart TD
 - **PostgreSQL** stores every decision in a persistent, audit-ready database.
 - **Streamlit Dashboard** provides a live view of the audit trail and flagged records.
 
-## 📂 Project Structure
+## Project Structure
 
 ```text
 identity-trust-assessment/
@@ -104,7 +104,7 @@ identity-trust-assessment/
 | Deployment | `Dockerfile` & `docker-compose.yml` | Enables the entire system to be built and run on a hospital's private on-premise servers. |
 | Adapters | `trust_layer/adapters/` | Pluggable parsers that normalize HL7 v2, FHIR, and regional profiles (ABDM, Nphies) into a single format. |
 
-## 🖥️ Dashboard Walkthrough
+## Dashboard Walkthrough
 
 The Streamlit dashboard provides a complete operational view for hospital data quality teams:
 
@@ -116,14 +116,14 @@ The Streamlit dashboard provides a complete operational view for hospital data q
 - **Coding Coherence, DRG Readiness, Data Governance:** Rule-based checks for ICD validity, IR-DRG grouping, and NABIDH/Malaffi minimum data set completeness.
 - **Audit Trail:** A permanent, tamper-evident log of every decision made by the system.
 
-## 📊 Results
+## Results
 
 - **Collision rejection:** 96.0% Gulf, 92.6% Australia (vs. 53.4% / 30.7% for Fellegi-Sunter)
 - Non-overlapping 95% confidence intervals in both contexts
 - **Fairness audit** (n=2,000, six nationality groups): chi-squared = 7.25, p = 0.203 (no significant bias)
 - Fellegi-Sunter comparator externally validated on the Febrl1 benchmark (F1 = 0.862)
 
-## 🚀 Deployment Options
+## Deployment Options
 
 ### 1. Live Demo (for Portfolio & Recruiters)
 
@@ -146,7 +146,7 @@ docker run -p 8000:8000 \
   trust-layer:latest
 ```
 
-## 📋 API Endpoints
+## API Endpoints
 
 | Endpoint | Method | Description |
 |----------|--------|-------------|
@@ -157,7 +157,7 @@ docker run -p 8000:8000 \
 | `/assess-batch` | POST | Assess a batch of records (CSV/JSON) |
 | `/reset` | POST | Reset the in-memory state |
 
-## 📥 Supported Input Formats
+## Supported Input Formats
 
 - HL7 FHIR Patient resources
 - HL7 v2 ADT messages (PID segment)
@@ -165,7 +165,7 @@ docker run -p 8000:8000 \
 - AU Core (Australia) FHIR profiles
 - Nphies (Saudi Arabia) FHIR profiles
 
-## ⚠️ Limitations & Future Roadmap
+## Limitations & Future Roadmap
 
 ### Current Limitations
 
@@ -180,7 +180,7 @@ docker run -p 8000:8000 \
 - [ ] Arabic language localization for the Streamlit dashboard
 - [ ] Formal publication of the expanded framework in a peer-reviewed journal
 
-## 📄 Paper & Recognition
+## Paper & Recognition
 
 This project is based on the research paper:
 
@@ -190,10 +190,10 @@ Published as a preprint on Zenodo: https://zenodo.org/records/22770188
 
 Selected as a top-15 finalist (out of 120+ submissions) at the AIMed26 Abstract Competition.
 
-## 📜 License
+## License
 
 MIT
 
-## 📬 Contact
+## Contact
 
 Hamza Shekhani – hamzashekhani650@gmail.com
