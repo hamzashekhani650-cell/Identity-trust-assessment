@@ -7,10 +7,9 @@ services:
     ports:
       - "8000:8000"
     environment:
-      - REGION_PROFILE=UAE (DOH)
+      - REGION_PROFILE="UAE (DOH)"
       - THRESHOLD_AUTO=0.75
       - THRESHOLD_QUAR=0.45
-      - TRUST_LAYER_API_KEY=  # Leave blank for now, set in production
-    volumes:
-      - ./data:/app/data  # Persists the SQLite database outside the container
+      - TRUST_LAYER_API_KEY=  # Leave blank for local dev, set in production
+      - DATABASE_URL=${DATABASE_URL}  # <-- ADD THIS LINE
     restart: unless-stopped
