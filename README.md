@@ -9,11 +9,9 @@
 
 Health information exchanges link patient records across hospitals, clinics, and labs. When two different patients share the same identifier (Emirates ID, MRN, insurance number), pairwise matchers link them incorrectly. One patient's medical history attaches to another's. This is a silent data corruption that can have severe clinical and financial consequences.
 
-The Identity Trust Assessment framework solves this by scoring every incoming patient record **before** any linkage decision is made. It evaluates five dimensions—Completeness, Temporal Validity, Identity Consistency, Provenance, and Cross-Record Consistency—and routes each record to **Auto-Link**, **Flag-for-Review**, or **Quarantine**, with a plain-language reason for every decision. 
+The Identity Trust Assessment framework solves this by scoring every incoming patient record **before** any linkage decision is made. It evaluates five dimensions—Completeness, Temporal Validity, Identity Consistency, Provenance, and Cross-Record Consistency—and routes each record to **Auto-Link**, **Flag-for-Review**, or **Quarantine**, with a plain-language reason for every decision.
 
 This is particularly critical for the UAE, a hyper-diverse country where patients arrive with names and identifiers transliterated from dozens of languages. The potential for identity collisions in platforms like **Malaffi** and **NABIDH** is immense, making this tool not just helpful, but necessary for the reliability of connected health systems.
-
-The project is built as a **FastAPI backend** for hospital integration and a **Streamlit dashboard** for data quality teams. It is fully containerized, meaning it can be deployed entirely on-premise inside a hospital's private network.
 
 ### Architecture & Data Flow
 
