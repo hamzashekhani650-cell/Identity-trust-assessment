@@ -142,3 +142,18 @@ def reset_state(x_api_key: Optional[str] = Header(None)):
 if __name__ == '__main__':
     import uvicorn
     uvicorn.run(app, host='0.0.0.0', port=8000)
+    @app.get("/decisions")
+def get_decisions(limit: int = 500):
+    """Fetches recent audit log entries for the Streamlit dashboard."""
+    try:
+        import psycopg2
+        import psycopg2.extras
+        conn = psycopg2.connect(os.environ.get("DATABASE_URL"), sslmode='require')
+        cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+        cur.execute(f"SELECT * FROM decisions ORDER BY id DESC LIMIT {limit}")
+        records = cur.fetchall()
+        cur.close()
+        conn.close()
+        return records
+    except Exception as e:
+        return {"error": str(e)}
