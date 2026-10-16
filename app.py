@@ -138,7 +138,8 @@ def reset_state(x_api_key: Optional[str] = Header(None)):
     _check_auth(x_api_key)
     engine.reset()
     return {'status': 'reset'}
-    @app.get("/decisions")
+
+@app.get("/decisions")
 def get_decisions(limit: int = 500):
     """Fetches recent audit log entries for the Streamlit dashboard."""
     try:
@@ -153,6 +154,7 @@ def get_decisions(limit: int = 500):
         return records
     except Exception as e:
         return {"error": str(e)}
+
 if __name__ == '__main__':
     import uvicorn
     uvicorn.run(app, host='0.0.0.0', port=8000)
