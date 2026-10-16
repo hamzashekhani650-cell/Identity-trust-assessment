@@ -29,7 +29,7 @@ except ImportError:
 # API Integration Configuration
 # ============================================================
 API_BASE_URL = "https://identity-trust-api.onrender.com"
-API_KEY = "" # <-- PASTE YOUR RENDER API KEY HERE
+API_KEY = "" # "https://identity-trust-api.onrender.com/docs#/default/assess_assess_post"
 
 def get_recent_decisions(limit=200):
     """Fetch recent decisions from the FastAPI backend."""
