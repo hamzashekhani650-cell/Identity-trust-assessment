@@ -1004,13 +1004,11 @@ def pg_batch():
         st.session_state['uploaded_name'] = uploaded_file.name
         st.session_state['batch_info'] = {'name': uploaded_file.name, 'processed_at': datetime.now().strftime('%d %b %Y, %H:%M')}
     
-    # --- NEW: SEND TO API FOR DATABASE STORAGE ---
-    with st.spinner('Sending records to the Trust Gate API for storage...'):
-      # --- NEW: SEND TO API FOR DATABASE STORAGE ---
+   # --- NEW: SEND TO API FOR DATABASE STORAGE ---
     with st.spinner('Sending records to the Trust Gate API for storage...'):
         try:
             df_upload = pd.read_csv(uploaded_file)
-            df_upload = df_upload.fillna("")  # <--- ADD THIS LINE HERE
+            df_upload = df_upload.fillna("")  # <--- THIS IS THE FIX
             records = df_upload.to_dict(orient='records')
             
             requests.post(
