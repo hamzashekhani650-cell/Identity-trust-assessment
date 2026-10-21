@@ -10,6 +10,7 @@ from prometheus_client import Counter, generate_latest, CONTENT_TYPE_LATEST
 from trust_engine import TrustEngine
 from trust_layer.hl7_ingest import parse_hl7_message, validate_hl7_structure
 from database import log_decision
+
 API_KEY = os.environ.get('TRUST_LAYER_API_KEY', '')
 REGION_PROFILE = os.environ.get('REGION_PROFILE', 'UAE (DOH)')
 THRESHOLD_AUTO = float(os.environ.get('THRESHOLD_AUTO', '0.75'))
@@ -83,11 +84,18 @@ def metrics():
 @app.post('/assess', response_model=Decision)
 def assess(payload: PatientInput, x_api_key: Optional[str] = Header(None)):
     _check_auth(x_api_key)
-    # Convert Pydantic model to plain dict for the engine
     result = engine.assess_record(payload.model_dump())
-    
-    # Click the Prometheus tally
     TRUST_DECISIONS.labels(decision_type=result['decision']).inc()
+    
+    # --- SAVE TO DATABASE ---
+    log_decision(
+        canonical_id=result['canonical_id'],
+        trust_score=result['trust_score'],
+        decision=result['decision'],
+        primary_issue=result['primary_issue'],
+        config_version=result['config_version']
+    )
+    # ------------------------
     
     return result
 
@@ -100,7 +108,6 @@ def assess_hl7(payload: HL7Input, x_api_key: Optional[str] = Header(None)):
     
     parsed = parse_hl7_message(payload.message)
     
-    # Map HL7 parsed output to the dictionary the engine expects
     record_dict = {
         'emirates_id': parsed.get('emirates_id'),
         'given_name': parsed.get('given_name', ''),
@@ -114,9 +121,17 @@ def assess_hl7(payload: HL7Input, x_api_key: Optional[str] = Header(None)):
     }
     
     result = engine.assess_record(record_dict)
-    
-    # Click the Prometheus tally
     TRUST_DECISIONS.labels(decision_type=result['decision']).inc()
+    
+    # --- SAVE TO DATABASE ---
+    log_decision(
+        canonical_id=result['canonical_id'],
+        trust_score=result['trust_score'],
+        decision=result['decision'],
+        primary_issue=result['primary_issue'],
+        config_version=result['config_version']
+    )
+    # ------------------------
     
     return result
 
@@ -126,9 +141,17 @@ def assess_batch(payloads: List[PatientInput], x_api_key: Optional[str] = Header
     results = []
     for p in payloads:
         res = engine.assess_record(p.model_dump())
-        
-        # Click the Prometheus tally for each record
         TRUST_DECISIONS.labels(decision_type=res['decision']).inc()
+        
+        # --- SAVE TO DATABASE ---
+        log_decision(
+            canonical_id=res['canonical_id'],
+            trust_score=res['trust_score'],
+            decision=res['decision'],
+            primary_issue=res['primary_issue'],
+            config_version=res['config_version']
+        )
+        # ------------------------
         
         results.append(res)
     return results
