@@ -1006,12 +1006,21 @@ def pg_batch():
     
     # --- NEW: SEND TO API FOR DATABASE STORAGE ---
     with st.spinner('Sending records to the Trust Gate API for storage...'):
+      # --- NEW: SEND TO API FOR DATABASE STORAGE ---
+    with st.spinner('Sending records to the Trust Gate API for storage...'):
         try:
             df_upload = pd.read_csv(uploaded_file)
+            df_upload = df_upload.fillna("")  # <--- ADD THIS LINE HERE
             records = df_upload.to_dict(orient='records')
-            requests.post(f"{API_BASE_URL}/assess-batch", json=records, headers={"X-API-Key": API_KEY} if API_KEY else {}, timeout=120)
+            
+            requests.post(
+                f"{API_BASE_URL}/assess-batch", 
+                json=records, 
+                headers={"X-API-Key": API_KEY} if API_KEY else {}, 
+                timeout=120
+            )
         except Exception as e:
-            st.warning(f"Could not store data in the cloud (Render may be asleep). UI will still work locally. Error: {e}")
+            st.warning(f"Could not store data in the cloud. Error: {e}")
     
     # Run local assessment for the beautiful UI
     with st.spinner('Running trust assessment locally...'):
