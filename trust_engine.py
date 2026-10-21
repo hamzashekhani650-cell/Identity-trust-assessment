@@ -208,15 +208,6 @@ class TrustEngine:
 
         self.cross_validator.add_record(rec)
 
-        # 4. Save to database before returning
-        self.db.log_decision({
-            'canonical_id': canonical_id,
-            'trust_score': composite,
-            'decision': decision,
-            'primary_issue': primary_issue,
-            'dimensions': dims
-        })
-
         return {
             'canonical_id': canonical_id,
             'trust_score': composite,
