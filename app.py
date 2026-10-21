@@ -9,7 +9,7 @@ from prometheus_client import Counter, generate_latest, CONTENT_TYPE_LATEST
 
 from trust_engine import TrustEngine
 from trust_layer.hl7_ingest import parse_hl7_message, validate_hl7_structure
-
+from database import log_decision
 API_KEY = os.environ.get('TRUST_LAYER_API_KEY', '')
 REGION_PROFILE = os.environ.get('REGION_PROFILE', 'UAE (DOH)')
 THRESHOLD_AUTO = float(os.environ.get('THRESHOLD_AUTO', '0.75'))
