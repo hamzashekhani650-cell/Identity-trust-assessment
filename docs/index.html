@@ -5,144 +5,245 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Identity Trust Assessment</title>
 <meta name="description" content="Score patient records for identity trust before linking them. Runs entirely in your browser.">
+<link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&display=swap" rel="stylesheet">
 <style>
-:root{--bg:#f6f8fb;--card:#fff;--ink:#1c2733;--mute:#5b6675;--line:#dde3ec;--navy:#163a6b;--blue:#2f6fd0;--teal:#0e8a8a;
---ok:#1b8a5a;--warn:#b7791f;--bad:#c0392b;--okbg:#e5f5ec;--warnbg:#fdf3dc;--badbg:#fbe7e4;--soft:#eef3fb}
-@media (prefers-color-scheme:dark){:root{--bg:#0f1520;--card:#17202e;--ink:#e6edf6;--mute:#9aa8ba;--line:#2a3648;--navy:#9dbbf2;--blue:#6aa0ff;--teal:#4fd1c5;
---ok:#4cc38a;--warn:#e0b04f;--bad:#ef8174;--okbg:#14301f;--warnbg:#33290f;--badbg:#391a17;--soft:#1c2738}}
+:root{
+  --side:#0b1f3d;--side2:#12305c;--accent:#22d3c5;--blue:#3b82f6;--navy:#163a6b;
+  --bg:#f1f5fb;--card:#fff;--ink:#14202e;--mute:#64748b;--line:#e2e8f0;--soft:#f1f5fb;
+  --ok:#10b981;--warn:#f59e0b;--bad:#ef4444;--okbg:#d9f6ea;--warnbg:#fdf0d3;--badbg:#fde0e0;
+  --shadow:0 1px 2px rgba(15,31,61,.06),0 6px 20px rgba(15,31,61,.06);
+}
+@media (prefers-color-scheme:dark){:root{--bg:#0a1220;--card:#121c2e;--ink:#e8eef8;--mute:#93a4bb;--line:#243249;--soft:#1a2740;--navy:#9dbbf2;
+  --okbg:#10352a;--warnbg:#3a2d0e;--badbg:#3d1a1a;--shadow:0 1px 2px rgba(0,0,0,.3),0 6px 20px rgba(0,0,0,.25)}}
 *{box-sizing:border-box}
-body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.5 system-ui,-apple-system,"Segoe UI",Roboto,Arial,sans-serif}
+html,body{margin:0}
+body{background:var(--bg);color:var(--ink);font:15px/1.5 "Manrope",system-ui,-apple-system,"Segoe UI",Roboto,Arial,sans-serif}
 a{color:var(--blue)}
-.wrap{max-width:1040px;margin:0 auto;padding:0 16px}
-header{background:var(--card);border-bottom:1px solid var(--line)}
-header .wrap{display:flex;gap:16px;align-items:center;justify-content:space-between;flex-wrap:wrap;padding-top:12px;padding-bottom:12px}
-.brand{font-weight:700;color:var(--navy);display:flex;align-items:center;gap:10px}
-.logo{width:30px;height:30px;border-radius:8px;background:var(--navy);color:#fff;display:grid;place-items:center;font-weight:700}
-@media (prefers-color-scheme:dark){.logo{color:#0f1520}}
-nav a{margin-left:16px;font-size:14px;text-decoration:none}
-.hero{padding:28px 0 8px}
-.hero h1{margin:0 0 6px;font-size:clamp(24px,4vw,34px);color:var(--navy);line-height:1.2}
-.hero p{margin:0 0 14px;color:var(--mute);max-width:720px}
-.pill{display:inline-block;font-size:12px;padding:3px 10px;border-radius:99px;background:var(--soft);color:var(--navy);font-weight:600;margin:0 6px 6px 0}
-.steps{display:flex;gap:8px;margin:18px 0;flex-wrap:wrap}
-.step{flex:1 1 140px;padding:10px 12px;border:1px solid var(--line);border-radius:10px;background:var(--card);font-size:14px;color:var(--mute);cursor:default}
-.step b{display:inline-grid;place-items:center;width:22px;height:22px;border-radius:50%;background:var(--line);color:var(--ink);font-size:12px;margin-right:8px}
-.step.on{border-color:var(--blue);color:var(--ink)}.step.on b{background:var(--blue);color:#fff}
-.step.done{cursor:pointer}.step.done b{background:var(--ok);color:#fff}
-.card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:20px;margin-bottom:16px}
-.card h2{margin:0 0 4px;font-size:19px;color:var(--navy)}
-.card .sub{margin:0 0 14px;color:var(--mute);font-size:14px}
-.btn{appearance:none;border:1px solid var(--blue);background:var(--blue);color:#fff;border-radius:8px;padding:10px 16px;font:inherit;font-weight:600;cursor:pointer}
-.btn.alt{background:transparent;color:var(--blue)}
-.btn:disabled{opacity:.5;cursor:not-allowed}
-.row{display:flex;gap:10px;flex-wrap:wrap;align-items:center}
-.drop{border:2px dashed var(--line);border-radius:12px;padding:30px 16px;text-align:center;color:var(--mute);margin-bottom:12px}
-.drop.over{border-color:var(--blue);background:var(--soft)}
-.grid2{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:12px}
-label{font-size:13px;color:var(--mute);display:block;margin-bottom:3px}
-select,input[type=number]{width:100%;padding:8px;border:1px solid var(--line);border-radius:8px;background:var(--card);color:var(--ink);font:inherit}
-.tablewrap{overflow:auto;border:1px solid var(--line);border-radius:10px}
+button{font:inherit}
+.app{display:grid;grid-template-columns:248px 1fr;min-height:100vh}
+/* sidebar */
+aside{background:linear-gradient(180deg,var(--side),var(--side2));color:#cfe0f7;padding:22px 14px;position:sticky;top:0;height:100vh;display:flex;flex-direction:column}
+.brand{display:flex;gap:11px;align-items:center;padding:0 8px 22px;color:#fff}
+.logo{width:38px;height:38px;border-radius:11px;background:linear-gradient(135deg,var(--accent),var(--blue));display:grid;place-items:center;color:#06203f}
+.brand b{display:block;font-size:15px;line-height:1.2}.brand span{font-size:12px;color:#8fb0d9}
+nav a.nav{display:flex;align-items:center;gap:11px;padding:11px 12px;border-radius:10px;color:#b9cfec;text-decoration:none;font-weight:600;margin-bottom:3px;cursor:pointer}
+nav a.nav svg{width:19px;height:19px;flex:none;opacity:.9}
+nav a.nav:hover{background:rgba(255,255,255,.07);color:#fff}
+nav a.nav.on{background:rgba(34,211,197,.14);color:#fff;box-shadow:inset 3px 0 0 var(--accent)}
+nav a.nav .cnt{margin-left:auto;background:var(--warn);color:#3a2600;border-radius:99px;font-size:12px;font-weight:800;padding:1px 8px}
+.sidefoot{margin-top:auto;font-size:12px;color:#8fb0d9;padding:14px 10px 0;border-top:1px solid rgba(255,255,255,.1)}
+.sidefoot .lock{display:flex;gap:8px;align-items:center;color:#d6e6fa;font-weight:600;margin-bottom:8px}
+.sidefoot a{color:#9fd8ff;display:inline-block;margin-right:12px}
+/* main */
+main{padding:22px 28px 60px;min-width:0}
+.top{display:flex;justify-content:space-between;align-items:center;gap:14px;flex-wrap:wrap;margin-bottom:20px}
+.top h1{margin:0;font-size:26px;letter-spacing:-.01em}
+.top .sub{margin:2px 0 0;color:var(--mute);font-size:14px}
+.chip{display:inline-flex;align-items:center;gap:7px;background:var(--card);border:1px solid var(--line);border-radius:99px;padding:6px 13px;font-size:13px;font-weight:600;color:var(--mute)}
+.chip i{width:8px;height:8px;border-radius:50%;background:var(--ok)}
+.btn{display:inline-flex;align-items:center;gap:8px;border:1px solid var(--line);background:var(--card);color:var(--ink);border-radius:10px;padding:9px 14px;font-weight:700;cursor:pointer}
+.btn:hover{border-color:var(--blue);color:var(--blue)}
+.btn.pri{background:linear-gradient(135deg,var(--blue),#2563eb);border-color:transparent;color:#fff}
+.btn.pri:hover{color:#fff;filter:brightness(1.07)}
+.btn svg{width:17px;height:17px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:16px;padding:20px;box-shadow:var(--shadow);margin-bottom:18px}
+.card h2{margin:0 0 3px;font-size:17px}.card .sub{color:var(--mute);font-size:13.5px;margin:0 0 14px}
+.grid{display:grid;gap:18px}
+.g4{grid-template-columns:repeat(auto-fit,minmax(190px,1fr))}
+.g2{grid-template-columns:repeat(auto-fit,minmax(320px,1fr))}
+.hide{display:none!important}
+/* hero pipeline */
+.pipe{background:linear-gradient(120deg,var(--side) 0%,var(--side2) 60%,#1b4a8a 100%);color:#e8f1ff;border-radius:18px;padding:22px 24px;margin-bottom:18px;position:relative;overflow:hidden}
+.pipe:after{content:"";position:absolute;right:-60px;top:-60px;width:220px;height:220px;border-radius:50%;background:radial-gradient(circle,rgba(34,211,197,.35),transparent 70%)}
+.pipe h2{margin:0 0 4px;font-size:20px;color:#fff;position:relative}
+.pipe p{margin:0 0 16px;color:#b8d0f0;max-width:640px;position:relative;font-size:14px}
+.flow{display:flex;align-items:stretch;gap:10px;flex-wrap:wrap;position:relative}
+.node{background:rgba(255,255,255,.08);border:1px solid rgba(255,255,255,.14);border-radius:12px;padding:10px 14px;font-size:13px;font-weight:700}
+.node small{display:block;font-weight:500;color:#9fc0e8;font-size:12px}
+.node.five{flex:1 1 280px}
+.dimchips{display:flex;flex-wrap:wrap;gap:6px;margin-top:6px}
+.dimchips span{background:rgba(34,211,197,.16);color:#9ff0e8;border-radius:99px;padding:2px 9px;font-size:12px;font-weight:700}
+.arrow{align-self:center;color:var(--accent);font-size:20px;font-weight:800}
+.routes{display:flex;flex-direction:column;gap:5px}
+.routes span{border-radius:7px;padding:2px 10px;font-size:12px;font-weight:800}
+.r1{background:var(--okbg);color:#0a6e4a}.r2{background:var(--warnbg);color:#8a5a00}.r3{background:var(--badbg);color:#a32020}
+/* kpi */
+.kpi{position:relative;overflow:hidden;padding:18px 18px 16px;border-radius:16px;background:var(--card);border:1px solid var(--line);box-shadow:var(--shadow)}
+.kpi:before{content:"";position:absolute;left:0;top:0;bottom:0;width:5px;background:var(--c)}
+.kpi .ic{width:38px;height:38px;border-radius:11px;display:grid;place-items:center;background:color-mix(in srgb,var(--c) 15%,transparent);color:var(--c);margin-bottom:10px}
+.kpi .ic svg{width:21px;height:21px}
+.kpi .n{font-size:30px;font-weight:800;letter-spacing:-.02em;line-height:1.1}
+.kpi .l{color:var(--mute);font-size:13px;font-weight:600}
+.kpi .p{position:absolute;right:16px;top:18px;font-weight:800;font-size:13px;color:var(--c)}
+/* donut */
+.donutwrap{display:flex;gap:22px;align-items:center;flex-wrap:wrap}
+.donut{position:relative;width:170px;height:170px;flex:none}
+.donut svg{transform:rotate(-90deg)}
+.donut .mid{position:absolute;inset:0;display:grid;place-items:center;text-align:center}
+.donut .mid b{display:block;font-size:30px;line-height:1;font-weight:800}.donut .mid small{color:var(--mute);font-weight:600;font-size:12px}
+.legend{display:grid;gap:9px;font-size:14px;font-weight:600}
+.legend i{display:inline-block;width:11px;height:11px;border-radius:4px;margin-right:9px}
+.legend span{color:var(--mute);font-weight:500;margin-left:6px}
+/* bars */
+.dim{display:grid;grid-template-columns:140px 1fr 42px;gap:10px;align-items:center;margin:11px 0;font-size:14px;font-weight:600}
+.dim .t{height:11px;background:var(--soft);border-radius:6px;overflow:hidden}.dim .t i{display:block;height:100%;border-radius:6px}
+.dim b{text-align:right}
+.reason{display:flex;justify-content:space-between;gap:12px;padding:9px 0;border-bottom:1px solid var(--line);font-size:14px}
+.reason:last-child{border:0}.reason b{background:var(--soft);border-radius:99px;padding:0 10px;font-size:13px;height:fit-content}
+/* sliders */
+.slider{margin:10px 0 16px}.slider label{display:flex;justify-content:space-between;font-weight:700;font-size:14px;margin-bottom:6px}
+input[type=range]{width:100%;accent-color:var(--blue)}
+/* table */
+.tools{display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-bottom:14px}
+.seg{display:inline-flex;background:var(--soft);border-radius:11px;padding:3px}
+.seg button{border:0;background:transparent;color:var(--mute);padding:7px 13px;border-radius:9px;font-weight:700;cursor:pointer}
+.seg button.on{background:var(--card);color:var(--ink);box-shadow:var(--shadow)}
+input[type=search],select,input[type=number]{border:1px solid var(--line);background:var(--card);color:var(--ink);border-radius:10px;padding:9px 12px;font:inherit}
+input[type=search]{min-width:220px;flex:1}
+.tw{overflow:auto;border:1px solid var(--line);border-radius:12px;max-height:560px}
 table{border-collapse:collapse;width:100%;font-size:14px}
-th,td{padding:8px 10px;text-align:left;border-bottom:1px solid var(--line);vertical-align:top}
-th{background:var(--soft);color:var(--navy);position:sticky;top:0;white-space:nowrap}
-.kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:10px;margin-bottom:14px}
-.kpi{border:1px solid var(--line);border-radius:10px;padding:12px}
-.kpi .n{font-size:26px;font-weight:700}.kpi .l{font-size:13px;color:var(--mute)}
-.badge{display:inline-block;padding:2px 9px;border-radius:99px;font-size:12px;font-weight:700;white-space:nowrap}
-.b-ok{background:var(--okbg);color:var(--ok)}.b-warn{background:var(--warnbg);color:var(--warn)}.b-bad{background:var(--badbg);color:var(--bad)}
-.bar{display:flex;height:14px;border-radius:7px;overflow:hidden;margin:6px 0 14px;background:var(--line)}
-.bar i{display:block}
-.dim{display:grid;grid-template-columns:150px 1fr 48px;gap:10px;align-items:center;font-size:14px;margin:6px 0}
-.dim .t{height:10px;background:var(--line);border-radius:5px;overflow:hidden}.dim .t i{display:block;height:100%;background:var(--teal)}
-.note{background:var(--warnbg);color:var(--ink);border-left:4px solid var(--warn);padding:10px 12px;border-radius:6px;font-size:14px;margin:12px 0}
+th,td{padding:10px 12px;text-align:left;border-bottom:1px solid var(--line);vertical-align:top}
+th{background:var(--soft);position:sticky;top:0;font-size:12px;text-transform:uppercase;letter-spacing:.05em;color:var(--mute);white-space:nowrap}
+tbody tr.click{cursor:pointer}tbody tr.click:hover{background:var(--soft)}
+.badge{display:inline-block;padding:3px 10px;border-radius:99px;font-size:12px;font-weight:800;white-space:nowrap}
+.b-ok{background:var(--okbg);color:#0a6e4a}.b-warn{background:var(--warnbg);color:#8a5a00}.b-bad{background:var(--badbg);color:#a32020}
+.mini{display:inline-flex;gap:3px;vertical-align:middle}.mini i{width:9px;height:18px;border-radius:3px}
+/* drop */
+.drop{border:2px dashed var(--line);border-radius:16px;padding:34px 16px;text-align:center;color:var(--mute);background:var(--soft)}
+.drop.over{border-color:var(--blue);background:color-mix(in srgb,var(--blue) 8%,var(--card))}
+.drop b{display:block;color:var(--ink);font-size:16px;margin-bottom:4px}
+.maps{display:grid;grid-template-columns:repeat(auto-fill,minmax(210px,1fr));gap:12px}
+.maps label{display:block;font-size:12.5px;font-weight:700;color:var(--mute);margin-bottom:4px}
+.maps select{width:100%}
+.note{background:var(--warnbg);border-left:4px solid var(--warn);border-radius:8px;padding:10px 14px;font-size:13.5px;margin:12px 0}
 .mono{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:12px;word-break:break-all}
-.hide{display:none}
-footer{padding:20px 0 40px;color:var(--mute);font-size:13px}
-@media print{header,.steps,.btn,.noprint,footer,#s1,#s2,#s3{display:none!important}.card{border:0;padding:0}body{background:#fff;color:#000}}
+.ok{color:var(--ok);font-weight:700}.err{color:var(--bad);font-weight:700}
+/* inspector */
+#insp{position:fixed;top:0;right:0;bottom:0;width:min(420px,100%);background:var(--card);border-left:1px solid var(--line);box-shadow:-12px 0 40px rgba(0,0,0,.18);padding:22px;overflow:auto;transform:translateX(105%);transition:transform .22s;z-index:30}
+#insp.open{transform:none}
+#insp h3{margin:0 0 2px;font-size:18px}
+.x{position:absolute;right:14px;top:14px;border:0;background:var(--soft);width:32px;height:32px;border-radius:9px;cursor:pointer;color:var(--ink);font-size:18px}
+.kv{display:grid;grid-template-columns:130px 1fr;gap:6px 10px;font-size:13.5px;margin:6px 0 16px}.kv dt{color:var(--mute);font-weight:600}.kv dd{margin:0;word-break:break-word}
+.why{padding-left:18px;margin:6px 0}.why li{margin:4px 0}
+.dcard{border:1px solid var(--line);border-radius:14px;padding:16px}
+.dcard h4{margin:0 0 6px}.dcard p{margin:0;color:var(--mute);font-size:13.5px}
+.dgrid{display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:14px}
+.num{display:inline-grid;place-items:center;width:26px;height:26px;border-radius:8px;background:var(--blue);color:#fff;font-weight:800;font-size:13px;margin-bottom:8px}
+.toast{position:fixed;left:50%;bottom:24px;transform:translateX(-50%);background:var(--side);color:#fff;padding:10px 18px;border-radius:12px;font-weight:700;z-index:50;box-shadow:var(--shadow)}
+@media (max-width:860px){
+  .app{grid-template-columns:1fr}
+  aside{position:static;height:auto;flex-direction:row;align-items:center;padding:10px;gap:6px;overflow-x:auto}
+  .brand{padding:0 10px 0 4px}.brand span,.sidefoot{display:none}
+  nav{display:flex;gap:4px}nav a.nav{margin:0;white-space:nowrap;padding:9px 11px}nav a.nav svg{display:none}
+  main{padding:16px 14px 50px}
+}
+@media print{aside,.tools,.btn,#insp,.noprint{display:none!important}.app{display:block}.card,.kpi{box-shadow:none}body{background:#fff}}
 </style>
 </head>
 <body>
-<header><div class="wrap">
-  <div class="brand"><span class="logo">+</span> Identity Trust Assessment</div>
-  <nav>
-    <a href="https://github.com/hamzashekhani650-cell/Identity-trust-assessment" target="_blank" rel="noopener">GitHub</a>
-    <a href="https://zenodo.org/records/22770188" target="_blank" rel="noopener">Preprint</a>
-    <a href="https://identity-trust-api.onrender.com/docs" target="_blank" rel="noopener">API docs</a>
+<div class="app">
+<aside>
+  <div class="brand"><div class="logo"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M12 3l8 3v6c0 4.5-3.2 7.6-8 9-4.8-1.4-8-4.5-8-9V6z"/><path d="M8.5 12l2.5 2.5L15.5 10"/></svg></div><div><b>Identity Trust</b><span>Assessment</span></div></div>
+  <nav id="nav">
+    <a class="nav" data-p="dashboard"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="9" rx="1.5"/><rect x="14" y="3" width="7" height="5" rx="1.5"/><rect x="14" y="12" width="7" height="9" rx="1.5"/><rect x="3" y="16" width="7" height="5" rx="1.5"/></svg>Dashboard</a>
+    <a class="nav" data-p="data"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 15V4M7 9l5-5 5 5"/><path d="M4 15v4a1 1 0 001 1h14a1 1 0 001-1v-4"/></svg>Data and mapping</a>
+    <a class="nav" data-p="records"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 21V4M5 4h11l-1.5 4L16 12H5"/></svg>Flagged records<span class="cnt" id="navcnt">0</span></a>
+    <a class="nav" data-p="audit"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="11" width="16" height="10" rx="2"/><path d="M8 11V8a4 4 0 018 0v3"/></svg>Audit trail</a>
+    <a class="nav" data-p="about"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 11v5M12 8h.01"/></svg>How it works</a>
   </nav>
-</div></header>
+  <div class="sidefoot">
+    <div class="lock"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><rect x="4" y="11" width="16" height="10" rx="2"/><path d="M8 11V8a4 4 0 018 0v3"/></svg>Runs in your browser</div>
+    Your files never leave your device.<br><br>
+    <a href="https://github.com/hamzashekhani650-cell/Identity-trust-assessment" target="_blank" rel="noopener">GitHub</a><a href="https://zenodo.org/records/22770188" target="_blank" rel="noopener">Preprint</a><a href="https://identity-trust-api.onrender.com/docs" target="_blank" rel="noopener">API</a>
+  </div>
+</aside>
 
-<main class="wrap">
-  <section class="hero">
-    <h1>Check patient records before you link them</h1>
-    <p>Each record is scored on five dimensions of identity trust, then routed to auto-link, review or quarantine with a plain-language reason. Built for health information exchanges where one identifier can end up shared by different patients.</p>
-    <span class="pill">Runs in your browser</span><span class="pill">No upload, no sign-in</span><span class="pill">Based on a published preprint</span>
-  </section>
-
-  <div class="steps" id="steps"></div>
-
-  <!-- 1 DATA -->
-  <section class="card" id="s1">
-    <h2>1. Add data</h2>
-    <p class="sub">Use a CSV or Excel file, or try the synthetic sample. Files are read in your browser and never leave your device.</p>
-    <div class="drop" id="drop">Drop a .csv, .xlsx or .xls file here<br><br>
-      <label class="btn alt" style="display:inline-block;margin:0">Choose file<input id="file" type="file" accept=".csv,.xlsx,.xls" hidden></label></div>
-    <div class="row"><button class="btn" id="sample">Try sample data</button><span class="sub" style="margin:0">320 synthetic records with planted collisions and errors.</span></div>
-    <div id="loaded" class="hide" style="margin-top:14px"></div>
-  </section>
-
-  <!-- 2 MAP -->
-  <section class="card hide" id="s2">
-    <h2>2. Check column mapping</h2>
-    <p class="sub">Columns were matched automatically. Adjust any that are wrong. Fields you leave unmapped are treated as missing.</p>
-    <div class="grid2" id="mapgrid"></div>
-    <div class="row" style="margin-top:14px"><button class="btn" id="tos3">Continue</button></div>
-  </section>
-
-  <!-- 3 ASSESS -->
-  <section class="card hide" id="s3">
-    <h2>3. Set thresholds and run</h2>
-    <p class="sub">A record's trust score is a weighted mean of five dimension scores (0 to 1). An identifier shared by patients with conflicting details is always quarantined, and a record with any failed check is never auto-linked.</p>
-    <div class="grid2">
-      <div><label>Auto-link at or above: <b id="hiv">0.85</b></label><input id="hi" type="range" min="0.5" max="1" step="0.01" value="0.85" style="width:100%"></div>
-      <div><label>Quarantine below: <b id="lov">0.60</b></label><input id="lo" type="range" min="0.2" max="0.9" step="0.01" value="0.60" style="width:100%"></div>
+<main>
+  <div class="top">
+    <div><h1 id="ptitle">Dashboard</h1><p class="sub" id="psub"></p></div>
+    <div class="row" style="display:flex;gap:10px;flex-wrap:wrap;align-items:center">
+      <span class="chip"><i></i><span id="dsname">No data</span></span>
+      <button class="btn noprint" id="csv"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 4v11M7 11l5 5 5-5M5 20h14"/></svg>Export CSV</button>
+      <button class="btn noprint" id="print">Print</button>
     </div>
-    <h3 style="font-size:15px;margin:16px 0 6px">Facility trust (provenance)</h3>
-    <p class="sub" style="margin-bottom:8px">How far do you trust each source facility's data? 0 to 1. Records with no facility score 0.5.</p>
-    <div class="grid2" id="facgrid"></div>
-    <div class="note">Demonstration thresholds and weights only. They are not the validated thresholds from the paper, and the page has not been tested on real patient data.</div>
-    <div class="row"><button class="btn" id="run">Run assessment</button></div>
-  </section>
+  </div>
 
-  <!-- 4 REVIEW -->
-  <section class="card hide" id="s4">
-    <h2>4. Results</h2>
-    <p class="sub" id="resum"></p>
-    <div class="kpis" id="kpis"></div>
-    <div class="bar" id="bar"></div>
-    <h3 style="font-size:15px;margin:0 0 6px">Average score by dimension</h3>
-    <div id="dims"></div>
-    <div class="row noprint" style="margin:18px 0 8px">
-      <label style="margin:0">Show</label>
-      <select id="filter" style="width:auto"><option value="notok">Needs attention</option><option value="Flag for review">Flagged</option><option value="Quarantine">Quarantined</option><option value="Auto-link">Auto-linked</option><option value="all">All records</option></select>
-      <button class="btn alt" id="csv">Download decisions (CSV)</button>
-      <button class="btn alt" id="print">Print report</button>
-      <button class="btn alt" id="again">Start over</button>
+  <!-- DASHBOARD -->
+  <section id="p-dashboard">
+    <div class="pipe">
+      <h2>Check patient records before you link them</h2>
+      <p>Every record is scored on five dimensions of identity trust, then routed with a plain-language reason. Built for exchanges where one identifier can end up shared by different patients.</p>
+      <div class="flow">
+        <div class="node">Incoming record<small>HL7, CSV or Excel</small></div><div class="arrow">&rarr;</div>
+        <div class="node five">Five trust checks<div class="dimchips"><span>Completeness</span><span>Temporal validity</span><span>Identity consistency</span><span>Provenance</span><span>Cross-record</span></div></div><div class="arrow">&rarr;</div>
+        <div class="node"><div class="routes"><span class="r1">Auto-link</span><span class="r2">Flag for review</span><span class="r3">Quarantine</span></div></div>
+      </div>
     </div>
-    <div class="tablewrap" style="max-height:480px"><table id="tbl"></table></div>
-    <p class="sub" id="cap" style="margin-top:8px"></p>
-    <h3 style="font-size:15px;margin:18px 0 6px">Audit trail</h3>
-    <p class="sub" style="margin-bottom:8px">Every decision is chained to the one before it with a SHA-256 hash, so any later change to a record or decision breaks the chain.</p>
-    <div class="row noprint"><button class="btn alt" id="verify">Verify chain</button><span id="vres" class="sub" style="margin:0"></span></div>
-    <p class="mono" id="head" style="margin-top:8px"></p>
+    <div class="grid g4" id="kpis" style="margin-bottom:18px"></div>
+    <div class="grid g2">
+      <div class="card"><h2>Decisions</h2><p class="sub">How the records were routed</p>
+        <div class="donutwrap"><div class="donut" id="donut"></div><div class="legend" id="legend"></div></div></div>
+      <div class="card"><h2>Average score by dimension</h2><p class="sub">Lower bars show where the data is weakest</p><div id="dims"></div></div>
+    </div>
+    <div class="grid g2">
+      <div class="card"><h2>Sensitivity</h2><p class="sub">Drag to change the thresholds. Everything updates live.</p>
+        <div class="slider"><label>Auto-link at or above <b id="hiv"></b></label><input id="hi" type="range" min="0.5" max="1" step="0.01"></div>
+        <div class="slider"><label>Quarantine below <b id="lov"></b></label><input id="lo" type="range" min="0.2" max="0.9" step="0.01"></div>
+        <div class="note" style="margin-bottom:0">Demonstration thresholds, not the validated ones from the paper. A record with any failed check is never auto-linked, and an identifier shared by conflicting patients is always quarantined.</div></div>
+      <div class="card"><h2>Most common problems</h2><p class="sub">Why records were flagged or quarantined</p><div id="reasons"></div></div>
+    </div>
   </section>
 
-  <section class="card">
-    <h2>The five dimensions</h2>
-    <p class="sub" style="margin-bottom:8px"><b>Completeness</b>: are the core identity fields present? <b>Temporal validity</b>: do birth, admission and discharge dates make sense? <b>Identity consistency</b>: do the identifier format and demographics agree? <b>Provenance</b>: how much is the source facility trusted? <b>Cross-record consistency</b>: does this identifier appear with conflicting details elsewhere?</p>
-    <p class="sub" style="margin:0">This page is a browser demonstration of the framework. The full engine, FastAPI service, HL7 v2 intake and audit database are in the <a href="https://github.com/hamzashekhani650-cell/Identity-trust-assessment" target="_blank" rel="noopener">repository</a>.</p>
+  <!-- DATA -->
+  <section id="p-data" class="hide">
+    <div class="card"><h2>Load data</h2><p class="sub">CSV or Excel. The file is read in your browser and never uploaded.</p>
+      <div class="drop" id="drop"><b>Drop a .csv, .xlsx or .xls file here</b>or <label class="btn pri" style="display:inline-flex;margin-top:8px">Choose file<input id="file" type="file" accept=".csv,.xlsx,.xls" hidden></label></div>
+      <div style="margin-top:14px;display:flex;gap:12px;align-items:center;flex-wrap:wrap"><button class="btn" id="sample">Load the synthetic sample</button><span class="sub" style="margin:0">336 records with planted collisions, missing fields and bad dates.</span></div></div>
+    <div class="card"><h2>Column mapping</h2><p class="sub">Matched automatically. Fix any that are wrong and the results update.</p><div class="maps" id="mapgrid"></div></div>
+    <div class="card"><h2>Facility trust</h2><p class="sub">How far you trust each source facility's data, from 0 to 1. Records with no facility score 0.5.</p><div class="maps" id="facgrid"></div></div>
+    <div class="card"><h2>Preview</h2><div class="tw" style="max-height:300px"><table id="prev"></table></div></div>
+  </section>
+
+  <!-- RECORDS -->
+  <section id="p-records" class="hide">
+    <div class="card">
+      <div class="tools">
+        <div class="seg" id="seg"><button data-f="notok" class="on">Needs attention</button><button data-f="Flag for review">Flagged</button><button data-f="Quarantine">Quarantined</button><button data-f="Auto-link">Auto-linked</button><button data-f="all">All</button></div>
+        <input type="search" id="q" placeholder="Search by ID, name or reason">
+      </div>
+      <div class="tw"><table id="tbl"></table></div>
+      <p class="sub" id="cap" style="margin:10px 0 0"></p>
+    </div>
+  </section>
+
+  <!-- AUDIT -->
+  <section id="p-audit" class="hide">
+    <div class="card"><h2>Tamper-evident log</h2><p class="sub">Each decision is hashed together with the one before it (SHA-256). Change any record afterwards and the chain breaks.</p>
+      <div class="tools noprint"><button class="btn pri" id="verify">Verify chain</button><button class="btn" id="tamper">Simulate tampering</button><button class="btn hide" id="restore">Undo tampering</button><span id="vres"></span></div>
+      <p class="mono" id="head"></p>
+      <div class="tw" style="max-height:380px"><table id="atbl"></table></div></div>
+  </section>
+
+  <!-- ABOUT -->
+  <section id="p-about" class="hide">
+    <div class="card"><h2>The five dimensions</h2><p class="sub">Each scores 0 to 1. The trust score is their weighted average.</p>
+      <div class="dgrid">
+        <div class="dcard"><span class="num">1</span><h4>Completeness</h4><p>Are patient ID, name, date of birth and sex present?</p></div>
+        <div class="dcard"><span class="num">2</span><h4>Temporal validity</h4><p>Do birth, admission and discharge dates make sense and come in a sensible order?</p></div>
+        <div class="dcard"><span class="num">3</span><h4>Identity consistency</h4><p>Do the identifier format and demographics agree, for example an Emirates ID year against the date of birth?</p></div>
+        <div class="dcard"><span class="num">4</span><h4>Provenance</h4><p>How much do you trust the facility the record came from?</p></div>
+        <div class="dcard"><span class="num">5</span><h4>Cross-record consistency</h4><p>Does the same identifier appear elsewhere with conflicting details? If so, it is quarantined.</p></div>
+      </div></div>
+    <div class="card"><h2>What this page is, and is not</h2>
+      <p class="sub" style="margin:0 0 10px">A browser demonstration of the framework from the preprint <em>Decoupling Record Trust from Record Linkage</em>. It is a re-implementation for demonstration, with placeholder thresholds and weights. The validated results (collision rejection of 96.0% and 92.6% against 53.4% and 30.7% for Fellegi-Sunter) come from the Python engine in the repository, on synthetic data. Nothing here has been tested on real patient data, so please use synthetic or de-identified files.</p>
+      <a class="btn" href="https://github.com/hamzashekhani650-cell/Identity-trust-assessment" target="_blank" rel="noopener">Full engine, API and HL7 intake on GitHub</a></div>
+    <p class="sub">Hamza Shekhani &middot; BSc Health Information Management, MAHE</p>
   </section>
 </main>
-<footer><div class="wrap">Hamza Shekhani · BSc Health Information Management, MAHE · Synthetic data only.</div></footer>
+</div>
+
+<div id="insp"></div>
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 <script>
@@ -162,220 +263,199 @@ const FIELDS=[
  ["discharge","Discharge date",["dischargedate","discharge"]]
 ];
 const DIMS=[["completeness","Completeness",.20],["temporal","Temporal validity",.15],["identity","Identity consistency",.25],["provenance","Provenance",.15],["cross","Cross-record",.25]];
-const STEPS=["Add data","Map columns","Set thresholds","Results"];
-let S={headers:[],rows:[],map:{},fac:{},res:null,audit:[],maxStep:1};
+const C={ok:"#10b981",warn:"#f59e0b",bad:"#ef4444"};
+const PAGES={dashboard:["Dashboard","Trust overview for the loaded dataset"],data:["Data and mapping","Load a file, check the column mapping and set facility trust"],records:["Flagged records","Click any row to see exactly why"],audit:["Audit trail","A tamper-evident log of every decision"],about:["How it works","The five dimensions and the limits of this demo"]};
+let S={headers:[],rows:[],map:{},fac:{},res:null,audit:null,hi:.85,lo:.60,filter:"notok",q:"",name:"",page:"dashboard",tampered:null};
+const ICON={rec:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><ellipse cx="12" cy="5" rx="8" ry="3"/><path d="M4 5v6c0 1.7 3.6 3 8 3s8-1.3 8-3V5M4 11v6c0 1.7 3.6 3 8 3s8-1.3 8-3v-6"/></svg>',
+ ok:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M8 12l3 3 5-6"/></svg>',
+ warn:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 21V4M5 4h11l-1.5 4L16 12H5"/></svg>',
+ bad:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l9 16H3z"/><path d="M12 10v4M12 17h.01"/></svg>'};
 
-/* ---------- stepper ---------- */
-function go(n){
-  S.maxStep=Math.max(S.maxStep,n);
-  ["s1","s2","s3","s4"].forEach((id,i)=>$(id).classList.toggle("hide",i+1!==n));
-  $("steps").innerHTML=STEPS.map((t,i)=>`<div class="step ${i+1===n?"on":i+1<S.maxStep||i+1<n?"done":""}" data-n="${i+1}"><b>${i+1}</b>${t}</div>`).join("");
-  $("steps").querySelectorAll(".step.done").forEach(e=>e.onclick=()=>go(+e.dataset.n));
-  window.scrollTo({top:$("steps").offsetTop-10,behavior:"smooth"});
+/* ---------- navigation ---------- */
+function show(p){
+  if(!PAGES[p])p="dashboard";S.page=p;
+  Object.keys(PAGES).forEach(k=>$("p-"+k).classList.toggle("hide",k!==p));
+  document.querySelectorAll("a.nav").forEach(a=>a.classList.toggle("on",a.dataset.p===p));
+  $("ptitle").textContent=PAGES[p][0];$("psub").textContent=PAGES[p][1];
+  closeInsp();if(location.hash!=="#"+p)history.replaceState(null,"","#"+p);
+  if(p==="audit")renderAudit();
+  window.scrollTo(0,0);
 }
+document.querySelectorAll("a.nav").forEach(a=>a.onclick=()=>show(a.dataset.p));
 
 /* ---------- parsing ---------- */
-function parseCSV(t){
-  const rows=[];let r=[],f="",q=false;
+function parseCSV(t){const rows=[];let r=[],f="",q=false;
   for(let i=0;i<t.length;i++){const c=t[i];
     if(q){if(c==='"'){if(t[i+1]==='"'){f+='"';i++}else q=false}else f+=c}
-    else if(c==='"')q=true;
-    else if(c===','){r.push(f);f=""}
+    else if(c==='"')q=true;else if(c===','){r.push(f);f=""}
     else if(c==='\n'||c==='\r'){if(c==='\r'&&t[i+1]==='\n')i++;r.push(f);f="";if(r.length>1||r[0]!=="")rows.push(r);r=[]}
     else f+=c}
-  if(f!==""||r.length){r.push(f);rows.push(r)}
-  return rows;
-}
-function tableFromMatrix(m){
-  const headers=m[0].map((h,i)=>String(h||"").trim()||`column_${i+1}`);
-  const rows=m.slice(1).map(r=>{const o={};headers.forEach((h,i)=>o[h]=r[i]??"");return o});
-  return{headers,rows};
-}
-function loadFile(file){
-  const rd=new FileReader();
-  if(/\.csv$/i.test(file.name)){
-    rd.onload=()=>{setData(tableFromMatrix(parseCSV(String(rd.result).replace(/^﻿/,""))),file.name)};
-    rd.readAsText(file);
-  }else{
-    if(!window.XLSX){alert("The Excel reader could not load. Check your connection or use a CSV file.");return}
-    rd.onload=()=>{
-      const wb=XLSX.read(rd.result,{type:"array",cellDates:true});
-      const ws=wb.Sheets[wb.SheetNames[0]];
+  if(f!==""||r.length){r.push(f);rows.push(r)}return rows}
+function tableFromMatrix(m){const headers=m[0].map((h,i)=>String(h||"").trim()||`column_${i+1}`);
+  return{headers,rows:m.slice(1).map(r=>{const o={};headers.forEach((h,i)=>o[h]=r[i]??"");return o})}}
+function loadFile(file){const rd=new FileReader();
+  if(/\.csv$/i.test(file.name)){rd.onload=()=>setData(tableFromMatrix(parseCSV(String(rd.result).replace(/^﻿/,""))),file.name);rd.readAsText(file)}
+  else{if(!window.XLSX){toast("The Excel reader could not load. Use a CSV file or check your connection.");return}
+    rd.onload=()=>{const wb=XLSX.read(rd.result,{type:"array",cellDates:true});const ws=wb.Sheets[wb.SheetNames[0]];
       const m=XLSX.utils.sheet_to_json(ws,{header:1,raw:true,defval:""}).map(r=>r.map(v=>v instanceof Date?v.toISOString().slice(0,10):v));
-      setData(tableFromMatrix(m),file.name);
-    };
-    rd.readAsArrayBuffer(file);
-  }
-}
-function setData(t,name){
-  if(!t.rows.length){alert("No data rows found in that file.");return}
-  S.headers=t.headers;S.rows=t.rows;S.res=null;S.maxStep=1;
-  autoMap();
-  $("loaded").classList.remove("hide");
-  $("loaded").innerHTML=`<b>${esc(name)}</b>: ${S.rows.length.toLocaleString()} records, ${S.headers.length} columns.
-   <div class="tablewrap" style="margin:10px 0"><table><tr>${S.headers.map(h=>`<th>${esc(h)}</th>`).join("")}</tr>${S.rows.slice(0,5).map(r=>`<tr>${S.headers.map(h=>`<td>${esc(r[h])}</td>`).join("")}</tr>`).join("")}</table></div>
-   <button class="btn" id="tos2">Continue</button>`;
-  $("tos2").onclick=()=>{buildMap();go(2)};
-}
-
-/* ---------- mapping ---------- */
+      setData(tableFromMatrix(m),file.name)};rd.readAsArrayBuffer(file)}}
 const norm=s=>String(s).toLowerCase().replace(/[^a-z0-9]/g,"");
-function autoMap(){
-  const used=new Set();S.map={};
+function autoMap(){const used=new Set();S.map={};
   FIELDS.forEach(([k,,syn])=>{const h=S.headers.find(h=>!used.has(h)&&syn.includes(norm(h)));if(h){S.map[k]=h;used.add(h)}});
-  FIELDS.forEach(([k,,syn])=>{if(S.map[k])return;
-    const h=S.headers.find(h=>!used.has(h)&&syn.some(s=>s.length>=4&&norm(h).includes(s)));if(h){S.map[k]=h;used.add(h)}});
-}
-function buildMap(){
-  $("mapgrid").innerHTML=FIELDS.map(([k,l])=>`<div><label>${l}</label><select data-k="${k}"><option value="">(not in dataset)</option>${S.headers.map(h=>`<option ${S.map[k]===h?"selected":""}>${esc(h)}</option>`).join("")}</select></div>`).join("");
-  $("mapgrid").querySelectorAll("select").forEach(s=>s.onchange=()=>{S.map[s.dataset.k]=s.value||undefined});
-}
+  FIELDS.forEach(([k,,syn])=>{if(S.map[k])return;const h=S.headers.find(h=>!used.has(h)&&syn.some(s=>s.length>=4&&norm(h).includes(s)));if(h){S.map[k]=h;used.add(h)}})}
+function setData(t,name,quiet){
+  if(!t.rows.length){toast("No data rows found in that file.");return}
+  S.headers=t.headers;S.rows=t.rows;S.name=name;S.fac={};S.tampered=null;autoMap();
+  if(!S.map.id){buildData();show("data");toast("Map a Patient ID column to continue.");return}
+  buildData();refresh();show("dashboard");if(!quiet)toast(`${S.rows.length.toLocaleString()} records loaded`)}
 
 /* ---------- value helpers ---------- */
-function toDate(v){ // returns {iso, bad}
-  if(v===""||v==null)return{iso:"",bad:false};
-  if(typeof v==="number"||/^\d{5}$/.test(String(v).trim())){const n=+v;if(n>1000&&n<80000){return{iso:new Date(Math.round((n-25569)*864e5)).toISOString().slice(0,10),bad:false}}return{iso:"",bad:true}}
+function chk(y,mo,d){const dt=new Date(Date.UTC(y,mo-1,d));if(dt.getUTCFullYear()!==y||dt.getUTCMonth()!==mo-1||dt.getUTCDate()!==d)return{iso:"",bad:true};return{iso:dt.toISOString().slice(0,10),bad:false}}
+function toDate(v){if(v===""||v==null)return{iso:"",bad:false};
+  if(typeof v==="number"||/^\d{5}$/.test(String(v).trim())){const n=+v;if(n>1000&&n<80000)return{iso:new Date(Math.round((n-25569)*864e5)).toISOString().slice(0,10),bad:false};return{iso:"",bad:true}}
   const s=String(v).trim();let m;
   if(m=s.match(/^(\d{4})[-\/.](\d{1,2})[-\/.](\d{1,2})/))return chk(+m[1],+m[2],+m[3]);
   if(m=s.match(/^(\d{1,2})[-\/.](\d{1,2})[-\/.](\d{4})/))return chk(+m[3],+m[2],+m[1]);
-  return{iso:"",bad:true};
-}
-function chk(y,mo,d){const dt=new Date(Date.UTC(y,mo-1,d));
-  if(dt.getUTCFullYear()!==y||dt.getUTCMonth()!==mo-1||dt.getUTCDate()!==d)return{iso:"",bad:true};
-  return{iso:dt.toISOString().slice(0,10),bad:false}}
-function sexNorm(v){const s=String(v??"").trim().toLowerCase();if(!s)return"";
-  if(["m","male","man"].includes(s))return"M";if(["f","female","woman"].includes(s))return"F";
-  if(["o","other","x","unknown","u"].includes(s))return"O";return"?"}
-function nameOf(r,M){const g=k=>M[k]?String(r[M[k]]??"").trim():"";
-  return(g("first")||g("last")?`${g("first")} ${g("last")}`:g("name")).trim()}
-function lev(a,b){if(a===b)return 0;const m=a.length,n=b.length;if(!m)return n;if(!n)return m;
-  let p=Array.from({length:n+1},(_,i)=>i);
+  return{iso:"",bad:true}}
+function sexNorm(v){const s=String(v??"").trim().toLowerCase();if(!s)return"";if(["m","male","man"].includes(s))return"M";if(["f","female","woman"].includes(s))return"F";if(["o","other","x","unknown","u"].includes(s))return"O";return"?"}
+function nameOf(r,M){const g=k=>M[k]?String(r[M[k]]??"").trim():"";return(g("first")||g("last")?`${g("first")} ${g("last")}`:g("name")).trim()}
+function lev(a,b){if(a===b)return 0;const m=a.length,n=b.length;if(!m)return n;if(!n)return m;let p=Array.from({length:n+1},(_,i)=>i);
   for(let i=1;i<=m;i++){const c=[i];for(let j=1;j<=n;j++)c[j]=Math.min(p[j]+1,c[j-1]+1,p[j-1]+(a[i-1]===b[j-1]?0:1));p=c}return p[n]}
-function sim(a,b){const L=Math.max(a.length,b.length);return L?1-lev(a,b)/L:1}
-
-/* ---------- SHA-256 (sync, small) ---------- */
+const sim=(a,b)=>{const L=Math.max(a.length,b.length);return L?1-lev(a,b)/L:1};
 function sha256(str){
-  const K=[];for(let i=2,c=0;c<64;i++){let p=true;for(let j=2;j*j<=i;j++)if(i%j==0){p=false;break}if(p){K[c++]=(Math.cbrt(i)%1*4294967296)|0}}
-  let H=[];for(let i=2,c=0;c<8;i++){let p=true;for(let j=2;j*j<=i;j++)if(i%j==0){p=false;break}if(p){H[c++]=(Math.sqrt(i)%1*4294967296)|0}}
+  const K=[];for(let i=2,c=0;c<64;i++){let p=true;for(let j=2;j*j<=i;j++)if(i%j==0){p=false;break}if(p)K[c++]=(Math.cbrt(i)%1*4294967296)|0}
+  let H=[];for(let i=2,c=0;c<8;i++){let p=true;for(let j=2;j*j<=i;j++)if(i%j==0){p=false;break}if(p)H[c++]=(Math.sqrt(i)%1*4294967296)|0}
   const b=new TextEncoder().encode(str),l=b.length,n=((l+9+63)>>6)<<6,w=new Uint8Array(n);w.set(b);w[l]=128;
   const dv=new DataView(w.buffer);dv.setUint32(n-8,Math.floor(l*8/4294967296));dv.setUint32(n-4,(l*8)>>>0);
   const W=new Int32Array(64),rr=(x,s)=>(x>>>s)|(x<<(32-s));
   for(let o=0;o<n;o+=64){for(let i=0;i<16;i++)W[i]=dv.getInt32(o+i*4);
     for(let i=16;i<64;i++){const a=W[i-15],c=W[i-2];W[i]=(W[i-16]+(rr(a,7)^rr(a,18)^(a>>>3))+W[i-7]+(rr(c,17)^rr(c,19)^(c>>>10)))|0}
     let[a,b2,c,d,e,f,g,h]=H;
-    for(let i=0;i<64;i++){const t1=(h+(rr(e,6)^rr(e,11)^rr(e,25))+((e&f)^(~e&g))+K[i]+W[i])|0,t2=((rr(a,2)^rr(a,13)^rr(a,22))+((a&b2)^(a&c)^(b2&c)))|0;
-      h=g;g=f;f=e;e=(d+t1)|0;d=c;c=b2;b2=a;a=(t1+t2)|0}
+    for(let i=0;i<64;i++){const t1=(h+(rr(e,6)^rr(e,11)^rr(e,25))+((e&f)^(~e&g))+K[i]+W[i])|0,t2=((rr(a,2)^rr(a,13)^rr(a,22))+((a&b2)^(a&c)^(b2&c)))|0;h=g;g=f;f=e;e=(d+t1)|0;d=c;c=b2;b2=a;a=(t1+t2)|0}
     H=[(H[0]+a)|0,(H[1]+b2)|0,(H[2]+c)|0,(H[3]+d)|0,(H[4]+e)|0,(H[5]+f)|0,(H[6]+g)|0,(H[7]+h)|0]}
-  return H.map(x=>(x>>>0).toString(16).padStart(8,"0")).join("");
-}
+  return H.map(x=>(x>>>0).toString(16).padStart(8,"0")).join("")}
 
-/* ---------- assessment ---------- */
-function runAssessment(){
-  const M=S.map,hi=+$("hi").value,lo=+$("lo").value,today=new Date().toISOString().slice(0,10);
-  const g=(r,k)=>M[k]?r[M[k]]:"";
-  const facTrust={};document.querySelectorAll("[data-fac]").forEach(i=>facTrust[i.dataset.fac]=Math.min(1,Math.max(0,+i.value)));
-  // cross-record groups
+/* ---------- assessment engine ---------- */
+function assess(){
+  const M=S.map,hi=S.hi,lo=S.lo,today=new Date().toISOString().slice(0,10),g=(r,k)=>M[k]?r[M[k]]:"";
   const groups=new Map();
   S.rows.forEach((r,i)=>{const id=String(g(r,"id")??"").trim().toUpperCase();if(!id)return;(groups.get(id)||groups.set(id,[]).get(id)).push(i)});
   const conflict=new Map();
-  groups.forEach((idx,id)=>{if(idx.length<2)return;
-    const dobs=new Set(),sx=new Set(),names=[];let bad=[];
+  groups.forEach((idx,id)=>{if(idx.length<2)return;const dobs=new Set(),sx=new Set(),names=[],bad=[];
     idx.forEach(i=>{const r=S.rows[i],d=toDate(g(r,"dob")).iso,s=sexNorm(g(r,"sex")),n=nameOf(r,M).toLowerCase().replace(/[^a-z؀-ۿ ]/g,"").trim();
       if(d)dobs.add(d);if(s&&s!=="?")sx.add(s);if(n)names.push(n)});
     if(dobs.size>1)bad.push("date of birth");if(sx.size>1)bad.push("sex");
-    const full=names.filter(n=>n.split(/\s+/).length>1);
-    if(full.some(n=>sim(n,full[0])<.6))bad.push("name");
-    if(bad.length)idx.forEach(i=>conflict.set(i,`Identifier ${id} is shared by ${idx.length} records with conflicting ${bad.join(", ")}`));
-  });
+    const full=names.filter(n=>n.split(/\s+/).length>1);if(full.some(n=>sim(n,full[0])<.6))bad.push("name");
+    if(bad.length)idx.forEach(i=>conflict.set(i,`Identifier ${id} is shared by ${idx.length} records with conflicting ${bad.join(", ")}`))});
   const out=[];
-  S.rows.forEach((r,i)=>{
-    const why=[],sc={};
+  S.rows.forEach((r,i)=>{const why=[],sc={};
     const id=String(g(r,"id")??"").trim(),nm=nameOf(r,M),dob=toDate(g(r,"dob")),sx=sexNorm(g(r,"sex"));
-    // completeness
-    const present=[!!id,!!nm,!!dob.iso,!!sx&&sx!=="?"];
-    sc.completeness=present.filter(Boolean).length/4;
-    [["patient ID",0],["name",1],["date of birth",2],["sex",3]].forEach(([l,k])=>{if(!present[k])why.push(`Missing ${l}`)});
-    // temporal
-    let tot=0,pass=0;
-    const T=(ok,msg)=>{tot++;if(ok)pass++;else why.push(msg)};
-    if(M.dob&&String(g(r,"dob"))!==""){T(!dob.bad,"Date of birth is not a valid date");
-      if(dob.iso){T(dob.iso<=today,"Date of birth is in the future");T(((new Date(today)-new Date(dob.iso))/315576e5)<=120,"Age is over 120")}}
+    const present=[!!id,!!nm,!!dob.iso,!!sx&&sx!=="?"];sc.completeness=present.filter(Boolean).length/4;
+    ["patient ID","name","date of birth","sex"].forEach((l,k)=>{if(!present[k])why.push(`Missing ${l}`)});
+    let tot=0,pass=0;const T=(ok,msg)=>{tot++;if(ok)pass++;else why.push(msg)};
+    if(M.dob&&String(g(r,"dob"))!==""){T(!dob.bad,"Date of birth is not a valid date");if(dob.iso){T(dob.iso<=today,"Date of birth is in the future");T(((new Date(today)-new Date(dob.iso))/315576e5)<=120,"Age is over 120")}}
     const ad=toDate(g(r,"admit")),dc=toDate(g(r,"discharge"));
-    if(M.admit&&String(g(r,"admit"))!==""){T(!ad.bad,"Admission date is not valid");
-      if(ad.iso){T(ad.iso<=today,"Admission date is in the future");if(dob.iso)T(ad.iso>=dob.iso,"Admission is before birth")}}
+    if(M.admit&&String(g(r,"admit"))!==""){T(!ad.bad,"Admission date is not valid");if(ad.iso){T(ad.iso<=today,"Admission date is in the future");if(dob.iso)T(ad.iso>=dob.iso,"Admission is before birth")}}
     if(M.discharge&&String(g(r,"discharge"))!==""){T(!dc.bad,"Discharge date is not valid");if(dc.iso&&ad.iso)T(dc.iso>=ad.iso,"Discharge is before admission")}
     sc.temporal=tot?pass/tot:.5;
-    // identity consistency
     tot=0;pass=0;
-    if(sx){T(sx!=="?","Unrecognised sex value")}
-    if(nm){T(!/\d/.test(nm)&&nm.replace(/\s/g,"").length>=2,"Name contains digits or is too short")}
-    const nid=String(g(r,"nid")??"").replace(/[\s]/g,"");
+    if(sx)T(sx!=="?","Unrecognised sex value");
+    if(nm)T(!/\d/.test(nm)&&nm.replace(/\s/g,"").length>=2,"Name contains digits or is too short");
+    const nid=String(g(r,"nid")??"").replace(/\s/g,"");
     if(nid){const m=nid.match(/^784-?(\d{4})-?(\d{7})-?(\d)$/);
       if(/^784/.test(nid)){T(!!m,"National ID does not match the Emirates ID format");if(m&&dob.iso)T(m[1]===dob.iso.slice(0,4),"Emirates ID birth year does not match date of birth")}
       else T(nid.length>=6,"National ID is too short")}
     sc.identity=tot?pass/tot:.5;
-    // provenance
     const fc=String(g(r,"facility")??"").trim();
-    sc.provenance=fc?(facTrust[fc]??.5):.5;
+    sc.provenance=fc?(S.fac[fc]??.9):.5;
     if(!fc)why.push("No source facility recorded");else if(sc.provenance<.6)why.push(`Low trust in source facility ${fc}`);
-    // cross
-    const cf=conflict.get(i);
-    if(!id){sc.cross=.5}else if(cf){sc.cross=0;why.unshift(cf)}else sc.cross=1;
+    const cf=conflict.get(i);if(!id)sc.cross=.5;else if(cf){sc.cross=0;why.unshift(cf)}else sc.cross=1;
     let score=0;DIMS.forEach(([k,,w])=>score+=sc[k]*w);
     let dec;
-    if(!id)dec="Quarantine",why.unshift("No patient identifier, cannot be linked");
+    if(!id){dec="Quarantine";why.unshift("No patient identifier, cannot be linked")}
     else if(sc.cross===0)dec="Quarantine";
     else dec=score>=hi&&!why.length?"Auto-link":score>=lo?"Flag for review":"Quarantine";
     if(dec==="Auto-link")why.push("All checks passed");
-    out.push({i,id,nm,score,sc,dec,reason:why.join("; ")});
-  });
-  // audit chain
-  let prev="GENESIS";S.audit=out.map(o=>{const payload=JSON.stringify([o.i,S.rows[o.i],o.dec,+o.score.toFixed(4)]);const h=sha256(prev+payload);const e={i:o.i,payload,prev,hash:h};prev=h;return e});
-  S.res={out,hi,lo};
-  renderResults();go(4);
-}
-
-/* ---------- results ---------- */
+    out.push({i,id,nm,score,sc,dec,why})});
+  S.res=out;S.audit=null}
 const cls={"Auto-link":"b-ok","Flag for review":"b-warn","Quarantine":"b-bad"};
-function renderResults(){
-  const {out,hi,lo}=S.res,N=out.length,c={"Auto-link":0,"Flag for review":0,"Quarantine":0};out.forEach(o=>c[o.dec]++);
-  $("resum").textContent=`${N.toLocaleString()} records assessed. Auto-link at ${hi.toFixed(2)} or above, quarantine below ${lo.toFixed(2)}.`;
-  $("kpis").innerHTML=[["Records",N,""],["Auto-linked",c["Auto-link"],"var(--ok)"],["Flagged",c["Flag for review"],"var(--warn)"],["Quarantined",c["Quarantine"],"var(--bad)"]]
-    .map(([l,n,col])=>`<div class="kpi"><div class="n" style="color:${col}">${n.toLocaleString()}</div><div class="l">${l}${l!=="Records"?` (${(n/N*100).toFixed(1)}%)`:""}</div></div>`).join("");
-  $("bar").innerHTML=[["Auto-link","var(--ok)"],["Flag for review","var(--warn)"],["Quarantine","var(--bad)"]].map(([k,col])=>`<i style="width:${c[k]/N*100}%;background:${col}" title="${k}"></i>`).join("");
-  $("dims").innerHTML=DIMS.map(([k,l])=>{const m=out.reduce((a,o)=>a+o.sc[k],0)/N;return`<div class="dim"><span>${l}</span><span class="t"><i style="width:${m*100}%"></i></span><b>${m.toFixed(2)}</b></div>`}).join("");
-  renderTable();$("head").textContent=`Chain head: ${S.audit[S.audit.length-1].hash}  (${S.audit.length.toLocaleString()} entries)`;$("vres").textContent="";
-}
-function renderTable(){
-  const f=$("filter").value,rows=S.res.out.filter(o=>f==="all"||(f==="notok"?o.dec!=="Auto-link":o.dec===f));
-  const show=rows.slice(0,300);
-  $("tbl").innerHTML=`<tr><th>Row</th><th>Patient ID</th><th>Name</th><th>Score</th><th>Decision</th><th>Reason</th></tr>`+
-   show.map(o=>`<tr><td>${o.i+2}</td><td>${esc(o.id)}</td><td>${esc(o.nm)}</td><td>${o.score.toFixed(2)}</td><td><span class="badge ${cls[o.dec]}">${o.dec}</span></td><td>${esc(o.reason)}</td></tr>`).join("")||`<tr><td colspan="6">Nothing to show.</td></tr>`;
-  $("cap").textContent=rows.length>show.length?`Showing the first ${show.length} of ${rows.length.toLocaleString()}. Download the CSV for all of them.`:`${rows.length.toLocaleString()} record${rows.length===1?"":"s"}.`;
-}
-function downloadCSV(){
-  const q=v=>`"${String(v??"").replace(/"/g,'""')}"`;
-  const head=[...S.headers,"trust_score","decision","reason",...DIMS.map(d=>d[0]+"_score")];
-  const lines=[head.map(q).join(",")];
-  S.res.out.forEach(o=>lines.push([...S.headers.map(h=>S.rows[o.i][h]),o.score.toFixed(3),o.dec,o.reason,...DIMS.map(d=>o.sc[d[0]].toFixed(3))].map(q).join(",")));
-  const a=document.createElement("a");a.href=URL.createObjectURL(new Blob([lines.join("\n")],{type:"text/csv"}));a.download="trust_decisions.csv";a.click();URL.revokeObjectURL(a.href);
-}
-function verify(){let prev="GENESIS";for(const e of S.audit){const row=S.rows[e.i];
-  const o=S.res.out[e.i];const payload=JSON.stringify([e.i,row,o.dec,+o.score.toFixed(4)]);
-  if(e.prev!==prev||sha256(prev+payload)!==e.hash){$("vres").innerHTML=`<span style="color:var(--bad)">Chain broken at entry ${e.i+1}.</span>`;return}prev=e.hash}
-  $("vres").innerHTML=`<span style="color:var(--ok)">Chain intact: ${S.audit.length.toLocaleString()} entries verified.</span>`}
+const colr=v=>v>=.8?C.ok:v>=.5?C.warn:C.bad;
+function groupReason(m){if(m.startsWith("Identifier "))return"Identifier shared by patients with conflicting details";if(m.startsWith("Low trust"))return"Low-trust source facility";return m}
 
-/* ---------- sample data ---------- */
+/* ---------- rendering ---------- */
+function refresh(){assess();renderDash();renderRecords();$("dsname").textContent=`${S.name} · ${S.rows.length.toLocaleString()} records`;
+  if(S.page==="audit")renderAudit()}
+function renderDash(){
+  const out=S.res,N=out.length,c={"Auto-link":0,"Flag for review":0,"Quarantine":0};out.forEach(o=>c[o.dec]++);
+  const K=[["Records assessed",N,"var(--blue)",ICON.rec,""],["Auto-linked",c["Auto-link"],C.ok,ICON.ok,1],["Flagged for review",c["Flag for review"],C.warn,ICON.warn,1],["Quarantined",c["Quarantine"],C.bad,ICON.bad,1]];
+  $("kpis").innerHTML=K.map(([l,n,col,ic,p])=>`<div class="kpi" style="--c:${col}"><div class="ic">${ic}</div>${p?`<span class="p">${(n/N*100).toFixed(1)}%</span>`:""}<div class="n">${n.toLocaleString()}</div><div class="l">${l}</div></div>`).join("");
+  const R=64,CI=2*Math.PI*R;let off=0;const seg=[["Auto-link",C.ok],["Flag for review",C.warn],["Quarantine",C.bad]];
+  $("donut").innerHTML=`<svg width="170" height="170" viewBox="0 0 170 170"><circle cx="85" cy="85" r="${R}" fill="none" stroke="var(--soft)" stroke-width="20"/>`+
+    seg.map(([k,col])=>{const len=c[k]/N*CI;const s=`<circle cx="85" cy="85" r="${R}" fill="none" stroke="${col}" stroke-width="20" stroke-dasharray="${len} ${CI-len}" stroke-dashoffset="${-off}"/>`;off+=len;return s}).join("")+
+    `</svg><div class="mid"><div><b>${(c["Auto-link"]/N*100).toFixed(0)}%</b><small>auto-linked</small></div></div>`;
+  $("legend").innerHTML=seg.map(([k,col])=>`<div><i style="background:${col}"></i>${k}<span>${c[k].toLocaleString()}</span></div>`).join("");
+  $("dims").innerHTML=DIMS.map(([k,l])=>{const m=out.reduce((a,o)=>a+o.sc[k],0)/N;return`<div class="dim"><span>${l}</span><span class="t"><i style="width:${m*100}%;background:${colr(m)}"></i></span><b>${m.toFixed(2)}</b></div>`}).join("");
+  const cnt={};out.filter(o=>o.dec!=="Auto-link").forEach(o=>{new Set(o.why.map(groupReason)).forEach(m=>cnt[m]=(cnt[m]||0)+1)});
+  const top=Object.entries(cnt).sort((a,b)=>b[1]-a[1]).slice(0,7);
+  $("reasons").innerHTML=top.length?top.map(([m,n])=>`<div class="reason"><span>${esc(m)}</span><b>${n}</b></div>`).join(""):`<p class="sub">Nothing to report. Every record passed.</p>`;
+  $("hi").value=S.hi;$("lo").value=S.lo;$("hiv").textContent=S.hi.toFixed(2);$("lov").textContent=S.lo.toFixed(2);
+  $("navcnt").textContent=(c["Flag for review"]+c["Quarantine"]).toLocaleString();
+}
+function miniBars(o){return`<span class="mini" title="${DIMS.map(d=>d[1]+" "+o.sc[d[0]].toFixed(2)).join(" | ")}">${DIMS.map(([k])=>`<i style="background:${colr(o.sc[k])};opacity:${.35+o.sc[k]*.65}"></i>`).join("")}</span>`}
+function renderRecords(){
+  const f=S.filter,q=S.q.trim().toLowerCase();
+  let rows=S.res.filter(o=>f==="all"||(f==="notok"?o.dec!=="Auto-link":o.dec===f));
+  if(q)rows=rows.filter(o=>(o.id+" "+o.nm+" "+o.why.join(" ")).toLowerCase().includes(q));
+  const show=rows.slice(0,250);
+  $("tbl").innerHTML=`<thead><tr><th>Row</th><th>Patient ID</th><th>Name</th><th>Score</th><th>Checks</th><th>Decision</th><th>Reason</th></tr></thead><tbody>`+
+    (show.map(o=>`<tr class="click" data-i="${o.i}"><td>${o.i+2}</td><td>${esc(o.id)}</td><td>${esc(o.nm)}</td><td><b>${o.score.toFixed(2)}</b></td><td>${miniBars(o)}</td><td><span class="badge ${cls[o.dec]}">${o.dec}</span></td><td>${esc(o.why.join("; "))}</td></tr>`).join("")||`<tr><td colspan="7" style="padding:26px;text-align:center;color:var(--mute)">No records match.</td></tr>`)+`</tbody>`;
+  $("tbl").querySelectorAll("tr.click").forEach(tr=>tr.onclick=()=>openInsp(+tr.dataset.i));
+  $("cap").textContent=rows.length>show.length?`Showing the first ${show.length} of ${rows.length.toLocaleString()}. Export the CSV for all of them.`:`${rows.length.toLocaleString()} record${rows.length===1?"":"s"}. The five bars in each row are the five dimensions, from Completeness to Cross-record.`;
+}
+function openInsp(i){
+  const o=S.res[i],r=S.rows[i];
+  $("insp").innerHTML=`<button class="x" onclick="closeInsp()" aria-label="Close">&times;</button>
+   <p class="sub" style="margin:0">Row ${i+2}</p><h3>${esc(o.nm||"(no name)")} <small style="color:var(--mute);font-weight:600">${esc(o.id)}</small></h3>
+   <div style="margin:10px 0 14px"><span class="badge ${cls[o.dec]}">${o.dec}</span> <b style="margin-left:8px">Trust score ${o.score.toFixed(2)}</b></div>
+   <h4 style="margin:0 0 4px">Why</h4><ul class="why">${o.why.map(w=>`<li>${esc(w)}</li>`).join("")}</ul>
+   <h4 style="margin:16px 0 2px">Dimension scores</h4>${DIMS.map(([k,l])=>`<div class="dim" style="grid-template-columns:130px 1fr 38px"><span>${l}</span><span class="t"><i style="width:${o.sc[k]*100}%;background:${colr(o.sc[k])}"></i></span><b>${o.sc[k].toFixed(2)}</b></div>`).join("")}
+   <h4 style="margin:16px 0 4px">Record</h4><dl class="kv">${S.headers.map(h=>`<dt>${esc(h)}</dt><dd>${esc(r[h])||'<span style="color:var(--mute)">(empty)</span>'}</dd>`).join("")}</dl>`;
+  $("insp").classList.add("open")}
+function closeInsp(){$("insp").classList.remove("open")}
+function buildData(){
+  $("mapgrid").innerHTML=FIELDS.map(([k,l])=>`<div><label>${l}</label><select data-k="${k}"><option value="">(not in dataset)</option>${S.headers.map(h=>`<option ${S.map[k]===h?"selected":""}>${esc(h)}</option>`).join("")}</select></div>`).join("");
+  $("mapgrid").querySelectorAll("select").forEach(s=>s.onchange=()=>{S.map[s.dataset.k]=s.value||undefined;if(!S.map.id){toast("A Patient ID column is required.");return}buildFac();refresh()});
+  buildFac();
+  $("prev").innerHTML=`<thead><tr>${S.headers.map(h=>`<th>${esc(h)}</th>`).join("")}</tr></thead><tbody>${S.rows.slice(0,8).map(r=>`<tr>${S.headers.map(h=>`<td>${esc(r[h])}</td>`).join("")}</tr>`).join("")}</tbody>`}
+function buildFac(){
+  const fs=[...new Set(S.rows.map(r=>S.map.facility?String(r[S.map.facility]??"").trim():"").filter(Boolean))].slice(0,16);
+  $("facgrid").innerHTML=fs.length?fs.map(f=>`<div><label>${esc(f)}</label><input type="number" min="0" max="1" step="0.05" value="${S.fac[f]??.9}" data-fac="${esc(f)}" style="width:100%"></div>`).join(""):`<p class="sub" style="margin:0">No facility column mapped, so provenance is 0.5 for every record.</p>`;
+  $("facgrid").querySelectorAll("input").forEach(i=>i.onchange=()=>{S.fac[i.dataset.fac]=Math.min(1,Math.max(0,+i.value));refresh()})}
+
+/* ---------- audit ---------- */
+function ensureAudit(){if(S.audit)return;let prev="GENESIS";S.audit=S.res.map(o=>{const h=sha256(prev+JSON.stringify([o.i,S.rows[o.i],o.dec,+o.score.toFixed(4)]));const e={i:o.i,prev,hash:h};prev=h;return e})}
+function renderAudit(){ensureAudit();const a=S.audit;
+  $("head").textContent=`Chain head: ${a[a.length-1].hash}  (${a.length.toLocaleString()} entries)`;
+  $("atbl").innerHTML=`<thead><tr><th>#</th><th>Row</th><th>Decision</th><th>Hash</th></tr></thead><tbody>`+a.slice(0,150).map((e,n)=>`<tr><td>${n+1}</td><td>${e.i+2}</td><td><span class="badge ${cls[S.res[e.i].dec]}">${S.res[e.i].dec}</span></td><td class="mono">${e.hash.slice(0,32)}...</td></tr>`).join("")+`</tbody>`}
+function verify(){ensureAudit();let prev="GENESIS";
+  for(const e of S.audit){const o=S.res[e.i];if(e.prev!==prev||sha256(prev+JSON.stringify([e.i,S.rows[e.i],o.dec,+o.score.toFixed(4)]))!==e.hash){$("vres").innerHTML=`<span class="err">Chain broken at entry ${S.audit.indexOf(e)+1}. A record or decision was changed after it was logged.</span>`;return}prev=e.hash}
+  $("vres").innerHTML=`<span class="ok">Chain intact. ${S.audit.length.toLocaleString()} entries verified.</span>`}
+function tamper(){ensureAudit();const h=S.map.dob||S.headers[1]||S.headers[0];S.tampered={h,v:S.rows[0][h]};S.rows[0][h]="TAMPERED";$("tamper").classList.add("hide");$("restore").classList.remove("hide");$("vres").innerHTML=`<span class="sub">Row 2 was edited in memory. Now verify.</span>`}
+function restore(){if(S.tampered){S.rows[0][S.tampered.h]=S.tampered.v;S.tampered=null}$("restore").classList.add("hide");$("tamper").classList.remove("hide");$("vres").innerHTML=""}
+
+/* ---------- export / sample ---------- */
+function downloadCSV(){const q=v=>`"${String(v??"").replace(/"/g,'""')}"`;
+  const lines=[[...S.headers,"trust_score","decision","reason",...DIMS.map(d=>d[0]+"_score")].map(q).join(",")];
+  S.res.forEach(o=>lines.push([...S.headers.map(h=>S.rows[o.i][h]),o.score.toFixed(3),o.dec,o.why.join("; "),...DIMS.map(d=>o.sc[d[0]].toFixed(3))].map(q).join(",")));
+  const a=document.createElement("a");a.href=URL.createObjectURL(new Blob([lines.join("\n")],{type:"text/csv"}));a.download="trust_decisions.csv";a.click();URL.revokeObjectURL(a.href)}
 function rng(a){return()=>{a|=0;a=a+0x6D2B79F5|0;let t=Math.imul(a^a>>>15,1|a);t=t+Math.imul(t^t>>>7,61|t)^t;return((t^t>>>14)>>>0)/4294967296}}
-function sampleData(){
-  const R=rng(42),pick=a=>a[Math.floor(R()*a.length)],iso=d=>d.toISOString().slice(0,10);
+function sampleData(){const R=rng(42),pick=a=>a[Math.floor(R()*a.length)],iso=d=>d.toISOString().slice(0,10);
   const F=["Ahmed","Fatima","Mohammed","Aisha","Omar","Layla","Yusuf","Mariam","Rahul","Priya","Arjun","Sneha","Joseph","Maria","John","Anna","Hassan","Noor","Khalid","Sara"];
   const L=["Al Mansoori","Khan","Sharma","Nair","Hussain","Ali","Thomas","Perera","Rahman","Iqbal","Verma","Fernandes","Saleh","Malik","Singh","Das"];
-  const fac=["Al Noor Hospital","City Medical Centre","Marina Clinic","Unity Health"];
-  const rows=[],pts=[];
+  const fac=["Al Noor Hospital","City Medical Centre","Marina Clinic","Unity Health"];const rows=[],pts=[];
   for(let p=0;p<230;p++){const by=1940+Math.floor(R()*70),bd=new Date(Date.UTC(by,Math.floor(R()*12),1+Math.floor(R()*28)));
     pts.push({id:"P"+String(1000+p),f:pick(F),l:pick(L),dob:bd,sex:R()<.5?"M":"F",eid:`784-${by}-${String(Math.floor(R()*1e7)).padStart(7,"0")}-${Math.floor(R()*10)}`,fac:pick(fac)})}
-  const visit=(p,k)=>{const a=new Date(Date.UTC(2024+Math.floor(R()*2),Math.floor(R()*12),1+Math.floor(R()*27)));const d=new Date(a.getTime()+Math.floor(R()*6)*864e5);
+  const visit=p=>{const a=new Date(Date.UTC(2024+Math.floor(R()*2),Math.floor(R()*12),1+Math.floor(R()*27)));const d=new Date(a.getTime()+Math.floor(R()*6)*864e5);
     return{patient_id:p.id,first_name:p.f,last_name:p.l,dob:iso(p.dob),sex:p.sex,emirates_id:p.eid,facility:p.fac,admission_date:iso(a),discharge_date:iso(d)}};
   pts.forEach(p=>{rows.push(visit(p));if(R()<.35)rows.push(visit(p))});
   for(let k=0;k<12;k++){const p=pts[k*7],o=visit(p);o.first_name=pick(F);o.last_name=pick(L);o.dob=iso(new Date(Date.UTC(1950+Math.floor(R()*50),Math.floor(R()*12),5)));o.sex=p.sex==="M"?"F":"M";o.facility=pick(fac);o.emirates_id=`784-${o.dob.slice(0,4)}-${String(Math.floor(R()*1e7)).padStart(7,"0")}-1`;rows.push(o)}
@@ -384,28 +464,25 @@ function sampleData(){
   for(let k=0;k<6;k++)rows[40+k*17].emirates_id="784-1999-12-X";
   for(let k=0;k<6;k++)rows[11+k*29].emirates_id=`784-${(rows[11+k*29].dob||"2000").slice(0,4)==="2000"?"1960":"2000"}-1234567-1`;
   for(let k=0;k<5;k++)rows[60+k*23].facility="";
-  const headers=["patient_id","first_name","last_name","dob","sex","emirates_id","facility","admission_date","discharge_date"];
-  return{headers,rows};
-}
+  return{headers:["patient_id","first_name","last_name","dob","sex","emirates_id","facility","admission_date","discharge_date"],rows}}
+let tt;function toast(m){document.querySelectorAll(".toast").forEach(e=>e.remove());const d=document.createElement("div");d.className="toast";d.textContent=m;document.body.appendChild(d);clearTimeout(tt);tt=setTimeout(()=>d.remove(),2600)}
 
 /* ---------- wiring ---------- */
-function buildFac(){
-  const fs=[...new Set(S.rows.map(r=>S.map.facility?String(r[S.map.facility]??"").trim():"").filter(Boolean))].slice(0,12);
-  $("facgrid").innerHTML=fs.length?fs.map(f=>`<div><label>${esc(f)}</label><input type="number" min="0" max="1" step="0.05" value="0.9" data-fac="${esc(f)}"></div>`).join(""):`<p class="sub">No facility column mapped, so provenance is 0.5 for every record.</p>`;
-}
-$("sample").onclick=()=>{const t=sampleData();setData(t,"Synthetic sample dataset");buildMap();go(2)};
+$("sample").onclick=()=>setData(sampleData(),"Synthetic sample");
 $("file").onchange=e=>{if(e.target.files[0])loadFile(e.target.files[0])};
 const dz=$("drop");["dragover","dragenter"].forEach(ev=>dz.addEventListener(ev,e=>{e.preventDefault();dz.classList.add("over")}));
 ["dragleave","drop"].forEach(ev=>dz.addEventListener(ev,e=>{e.preventDefault();dz.classList.remove("over")}));
 dz.addEventListener("drop",e=>{if(e.dataTransfer.files[0])loadFile(e.dataTransfer.files[0])});
-$("tos3").onclick=()=>{if(!S.map.id){alert("Map a Patient ID column to continue.");return}buildFac();go(3)};
-$("hi").oninput=()=>$("hiv").textContent=(+$("hi").value).toFixed(2);
-$("lo").oninput=()=>$("lov").textContent=(+$("lo").value).toFixed(2);
-$("run").onclick=()=>{if(+$("lo").value>=+$("hi").value){alert("The quarantine threshold must be lower than the auto-link threshold.");return}
-  $("run").disabled=true;$("run").textContent="Running...";setTimeout(()=>{runAssessment();$("run").disabled=false;$("run").textContent="Run assessment"},30)};
-$("filter").onchange=renderTable;$("csv").onclick=downloadCSV;$("print").onclick=()=>window.print();$("verify").onclick=verify;
-$("again").onclick=()=>{S.res=null;S.maxStep=1;$("loaded").classList.add("hide");go(1)};
-go(1);
+let dbt;function sl(){let hi=+$("hi").value,lo=+$("lo").value;if(lo>=hi-.02){if(document.activeElement===$("hi"))hi=lo+.02;else lo=hi-.02}S.hi=Math.min(1,hi);S.lo=Math.max(.2,lo);
+  $("hiv").textContent=S.hi.toFixed(2);$("lov").textContent=S.lo.toFixed(2);$("hi").value=S.hi;$("lo").value=S.lo;clearTimeout(dbt);dbt=setTimeout(()=>{assess();renderDash();renderRecords()},40)}
+$("hi").oninput=sl;$("lo").oninput=sl;
+$("seg").querySelectorAll("button").forEach(b=>b.onclick=()=>{S.filter=b.dataset.f;$("seg").querySelectorAll("button").forEach(x=>x.classList.toggle("on",x===b));renderRecords()});
+$("q").oninput=e=>{S.q=e.target.value;renderRecords()};
+$("csv").onclick=downloadCSV;$("print").onclick=()=>window.print();
+$("verify").onclick=verify;$("tamper").onclick=tamper;$("restore").onclick=restore;
+document.addEventListener("keydown",e=>{if(e.key==="Escape")closeInsp()});
+window.addEventListener("hashchange",()=>show(location.hash.slice(1)));
+setData(sampleData(),"Synthetic sample",true);show(location.hash.slice(1)||"dashboard");
 </script>
 </body>
 </html>
